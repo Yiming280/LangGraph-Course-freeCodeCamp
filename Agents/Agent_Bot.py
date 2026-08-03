@@ -1,6 +1,6 @@
 from typing import TypedDict, List
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from langgraph.graph import StateGraph, START, END
 from dotenv import load_dotenv # used to store secret stuff like API keys or configuration values
 
@@ -9,7 +9,7 @@ load_dotenv()
 class AgentState(TypedDict):
     messages: List[HumanMessage]
 
-llm = ChatOpenAI(model="gpt-4o")
+llm = ChatOllama(model="qwen2.5")
 
 def process(state: AgentState) -> AgentState:
     response = llm.invoke(state["messages"])

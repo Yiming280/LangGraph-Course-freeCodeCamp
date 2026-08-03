@@ -1,7 +1,7 @@
 from typing import Annotated, Sequence, TypedDict
 from dotenv import load_dotenv  
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from langchain_core.tools import tool
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, END
@@ -50,7 +50,7 @@ def save(filename: str) -> str:
 
 tools = [update, save]
 
-model = ChatOpenAI(model="gpt-4o").bind_tools(tools)
+model = ChatOllama(model="qwen2.5").bind_tools(tools)
 
 def our_agent(state: AgentState) -> AgentState:
     system_prompt = SystemMessage(content=f"""

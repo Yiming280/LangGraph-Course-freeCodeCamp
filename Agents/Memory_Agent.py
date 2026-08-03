@@ -1,7 +1,7 @@
 import os
 from typing import TypedDict, List, Union
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from langgraph.graph import StateGraph, START, END
 from dotenv import load_dotenv
 
@@ -10,7 +10,7 @@ load_dotenv()
 class AgentState(TypedDict):
     messages: List[Union[HumanMessage, AIMessage]]
 
-llm = ChatOpenAI(model="gpt-4o")
+llm = ChatOllama(model="qwen2.5")
 
 def process(state: AgentState) -> AgentState:
     """This node will solve the request you input"""
@@ -28,6 +28,11 @@ graph.add_edge(START, "process")
 graph.add_edge("process", END) 
 agent = graph.compile()
 
+# Save graph visualization to file
+# graph_png = agent.get_graph().draw_mermaid_png()
+# with open("graph.png", "wb") as f:
+#     f.write(graph_png)
+# print("Graph saved to graph.png")
 
 conversation_history = []
 
@@ -39,7 +44,7 @@ while user_input != "exit":
     user_input = input("Enter: ")
 
 
-with open("logging.txt", "w") as file:
+with open("logging_custom.txt", "w") as file:
     file.write("Your Conversation Log:\n")
     
     for message in conversation_history:
@@ -49,4 +54,4 @@ with open("logging.txt", "w") as file:
             file.write(f"AI: {message.content}\n\n")
     file.write("End of Conversation")
 
-print("Conversation saved to logging.txt")
+print("Conversation saved to logging_custom.txt")
