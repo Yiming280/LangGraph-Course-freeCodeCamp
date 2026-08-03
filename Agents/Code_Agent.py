@@ -9,6 +9,8 @@ from langchain_core.tools import tool
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
+import psycopg2
+import psycopg2.extras
 
 load_dotenv()
 
@@ -52,7 +54,42 @@ def python_executor(code: str) -> str:
         os.unlink(tmp_path)
 
 
-tools = [python_executor]
+@tool
+def query_database(sql: str) -> str:
+    """Query the PostgreSQL database and return results.
+
+    Use this tool to run SQL queries against the agile_dispatch database.
+    The database connection is configured via .env (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD).
+
+    Args:
+        sql: The SQL query to execute. Only SELECT queries are allowed.
+    """
+    conn = psycopg2.connect(
+        host=os.getenv("DB_HOST"),
+        port=os.getenv("DB_PORT"),
+        dbname=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+    )
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(sql)
+        if sql.strip().upper().startswith("SELECT"):
+            rows = cur.fetchall()
+            if not rows:
+                return "(Query returned 0 rows)"
+            return f"({len(rows)} rows)\n" + str(rows[:50])  # limit to 50 rows
+        else:
+            conn.commit()
+            return f"Query executed. Rows affected: {cur.rowcount}"
+    except Exception as e:
+        conn.rollback()
+        return f"Database error: {e}"
+    finally:
+        conn.close()
+
+
+tools = [query_database, python_executor]
 
 model = ChatOllama(model="qwen2.5").bind_tools(tools)
 
@@ -60,17 +97,26 @@ model = ChatOllama(model="qwen2.5").bind_tools(tools)
 def model_call(state: AgentState) -> AgentState:
     system_prompt = SystemMessage(content="""You are a Code Agent - an AI assistant that writes and executes Python code to solve problems.
 
+You have TWO tools available:
+
+1. `query_database(sql)` — Run SQL queries against a PostgreSQL database (agile_dispatch).
+   Use this to explore the database schema and fetch data.
+   Common queries to start: "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
+   Then: "SELECT column_name, data_type FROM information_schema.columns WHERE table_name='your_table'"
+
+2. `python_executor(code)` — Execute Python code to analyze data, create charts, or anything else.
+
 Your workflow:
-1. When given a task, think step-by-step about how to solve it with code.
-2. Use the `python_executor` tool to run Python code.
-3. Analyze the output. If it didn't work, debug and try again.
-4. Once you get the correct result, explain the answer to the user.
+1. When given a task involving data, FIRST explore the database schema with query_database.
+2. Once you understand the tables, query the data you need.
+3. Use python_executor to process/analyze/visualize the results.
+4. Explain findings clearly to the user.
 
 Guidelines:
 - Write clean, well-commented Python code.
 - Handle edge cases and errors gracefully.
 - If you need to install a package, include `subprocess.run(["pip", "install", "..."])` in your code.
-- Always explain your approach before writing code.
+- Always explain your approach before writing code or querying.
 - If the code fails, read the error carefully and fix it.
 """)
     response = model.invoke([system_prompt] + state["messages"])
