@@ -6,22 +6,25 @@ from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, To
 from operator import add as add_messages
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_core.tools import tool
 
 load_dotenv()
 
 llm = ChatOllama(
-    model="qwen2.5", temperature = 0) # I want to minimize hallucination - temperature = 0 makes the model output more deterministic
+    base_url="http://10.8.20.83:11435",  # 远程 Ollama 服务器地址和映射端口
+    model="qwen3.6:27b", 
+    temperature = 0) # I want to minimize hallucination - temperature = 0 makes the model output more deterministic
 
 # Our Embedding Model - has to also be compatible with the LLM
 embeddings = OllamaEmbeddings(
+    base_url="http://10.8.20.83:11435",
     model="nomic-embed-text",
 )
 
 
-pdf_path = "Stock_Market_Performance_2024.pdf"
+pdf_path = "Agents/Stock_Market_Performance_2024.pdf"
 
 
 # Safety measure I have put for debugging purposes :)
@@ -47,7 +50,7 @@ text_splitter = RecursiveCharacterTextSplitter(
 
 pages_split = text_splitter.split_documents(pages) # We now apply this to our pages
 
-persist_directory = r"C:\Vaibhav\LangGraph_Book\LangGraphCourse\Agents"
+persist_directory = r"Agents"
 collection_name = "stock_market"
 
 # If our collection does not exist in the directory, we create using the os command

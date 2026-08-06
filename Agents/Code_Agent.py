@@ -91,7 +91,11 @@ def query_database(sql: str) -> str:
 
 tools = [query_database, python_executor]
 
-model = ChatOllama(model="qwen2.5").bind_tools(tools)
+model = ChatOllama(
+    base_url="http://10.8.20.83:11435",  # 远程 Ollama 服务器地址和映射端口
+    model="qwen3.6:27b",                # 模型名称
+    temperature=0.2,
+).bind_tools(tools)
 
 
 def model_call(state: AgentState) -> AgentState:
