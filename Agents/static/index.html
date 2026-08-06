@@ -164,6 +164,12 @@
             margin-bottom: 6px;
             user-select: none;
         }
+        .think-block .think-body {
+            white-space: pre-wrap;
+        }
+        .answer-area {
+            white-space: pre-wrap;
+        }
 
         .msg .bubble .cursor {
             display: inline-block;
@@ -297,8 +303,11 @@
         }
 
         /**
-         * 创建一个空的 bot 气泡，返回该气泡的 DOM 元素，
-         * 后续通过 appendToBotBubble() 往里追加内容。
+         * 创建一个空的 bot 气泡，返回该气泡的 DOM 元素。
+         * 后端把模型输出拆成两条通道：
+         *   thinking → 折叠的"思考过程"块（details）
+         *   content  → 正文答案区
+         * 这里只维护两个容器的懒创建与追加。
          */
         function createBotBubble() {
             const div = document.createElement('div');
@@ -311,54 +320,75 @@
           `;
             messagesEl.appendChild(div);
             scrollToBottom();
-            return div.querySelector('.bubble');
+            const bubbleEl = div.querySelector('.bubble');
+            bubbleEl._thinkBody = null;   // details 里的思考正文容器
+            bubbleEl._answerEl = null;    // 正式回答容器
+            return bubbleEl;
         }
 
-        /**
-         * 向 bot 气泡追加文本（解析 <think> 折叠块）。
-         * 调用时机：SSE 每收到一个 chunk。
-         */
-        function appendToBotBubble(bubbleEl, newContent) {
-            // 移除 loading 动画（如果还在）
-            const indicator = bubbleEl.querySelector('.thinking-indicator');
-            if (indicator) indicator.remove();
+        function removeIndicator(bubbleEl) {
+            const ind = bubbleEl.querySelector('.thinking-indicator');
+            if (ind) ind.remove();
+        }
 
-            // 追加原始内容
-            bubbleEl._rawText = (bubbleEl._rawText || '') + newContent;
+        /** 懒创建"思考过程"折叠块，返回其正文容器 */
+        function ensureThinkBlock(bubbleEl) {
+            removeIndicator(bubbleEl);
+            if (!bubbleEl._thinkBody) {
+                const details = document.createElement('details');
+                details.className = 'think-block';
+                details.open = true;
 
-            // 重新渲染：解析 <think>...</think> 为折叠块
-            const rendered = renderMarkdown(bubbleEl._rawText);
-            bubbleEl.innerHTML = rendered;
+                const summary = document.createElement('summary');
+                summary.textContent = '🤔 思考过程';
 
-            // 如果流未结束，追加闪烁光标
-            bubbleEl.innerHTML += '<span class="cursor"></span>';
+                const body = document.createElement('div');
+                body.className = 'think-body';
 
+                details.appendChild(summary);
+                details.appendChild(body);
+                bubbleEl.insertBefore(details, bubbleEl.firstChild);
+                bubbleEl._thinkBody = body;
+            }
+            return bubbleEl._thinkBody;
+        }
+
+        /** 懒创建"正式回答"容器 */
+        function ensureAnswerEl(bubbleEl) {
+            removeIndicator(bubbleEl);
+            if (!bubbleEl._answerEl) {
+                const div = document.createElement('div');
+                div.className = 'answer-area';
+                bubbleEl.appendChild(div);
+                bubbleEl._answerEl = div;
+            }
+            return bubbleEl._answerEl;
+        }
+
+        /** thinking 通道：追加到折叠块（textContent 天然防注入） */
+        function appendThinking(bubbleEl, text) {
+            ensureThinkBlock(bubbleEl).textContent += text;
+            scrollToBottom();
+        }
+
+        /** content 通道：追加到答案区，末尾带闪烁光标 */
+        function appendAnswer(bubbleEl, text) {
+            const ans = ensureAnswerEl(bubbleEl);
+            ans.textContent += text;
+            const oldCursor = ans.querySelector('.cursor');
+            if (oldCursor) oldCursor.remove();
+            const cursor = document.createElement('span');
+            cursor.className = 'cursor';
+            ans.appendChild(cursor);
             scrollToBottom();
         }
 
         /** 流结束时调用：去掉光标，固定最终渲染 */
         function finalizeBotBubble(bubbleEl) {
-            bubbleEl.innerHTML = renderMarkdown(bubbleEl._rawText || '');
-            bubbleEl._rawText = '';
-        }
-
-        /**
-         * 将包含 <think> 标签的文本渲染为 HTML：
-         * - <think>...内容...</think> 折叠为 <details>
-         * - 其余文本保留
-         */
-        function renderMarkdown(text) {
-            // 保护 HTML 实体
-            let html = escapeHtml(text);
-
-            // 将 <think>...</think> 替换为折叠块
-            html = html.replace(
-                /&lt;think&gt;([\s\S]*?)&lt;\/think&gt;/g,
-                (_, content) =>
-                `<details class="think-block" open><summary>🤔 思考过程</summary>${content.trim()}</details>`
-            );
-
-            return html;
+            const cursor = bubbleEl.querySelector('.cursor');
+            if (cursor) cursor.remove();
+            bubbleEl._thinkBody = null;
+            bubbleEl._answerEl = null;
         }
 
         function escapeHtml(str) {
@@ -416,12 +446,18 @@
                         for (const line of lines) {
                             if (line.startsWith('data: ')) {
                                 const payload = JSON.parse(line.slice(6));
-                                if (payload.done) {
+                                if (payload.type === 'done') {
                                     // 流结束
                                     finalizeBotBubble(currentBotBubble);
                                     currentBotBubble = null;
-                                } else {
-                                    appendToBotBubble(currentBotBubble, payload.content);
+                                } else if (payload.type === 'thinking') {
+                                    // 思考过程 → 折叠块
+                                    appendThinking(currentBotBubble, payload.content);
+                                } else if (payload.type === 'content') {
+                                    // 正式回答 → 答案区
+                                    appendAnswer(currentBotBubble, payload.content);
+                                } else if (payload.type === 'error') {
+                                    appendAnswer(currentBotBubble, `\n\n❌ ${payload.content}`);
                                 }
                             }
                         }
@@ -429,7 +465,7 @@
                 }
             } catch (err) {
                 if (currentBotBubble) {
-                    appendToBotBubble(currentBotBubble, `\n\n❌ 请求失败: ${err.message}`);
+                    appendAnswer(currentBotBubble, `\n\n❌ 请求失败: ${err.message}`);
                     finalizeBotBubble(currentBotBubble);
                     currentBotBubble = null;
                 }

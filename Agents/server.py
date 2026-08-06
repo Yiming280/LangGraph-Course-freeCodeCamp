@@ -1,10 +1,9 @@
 import json
 from pathlib import Path
 
+import ollama
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
-from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_ollama import ChatOllama
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,23 +11,27 @@ load_dotenv()
 app = FastAPI(title="LangGraph Chat Bot")
 
 # ============================================================
-# LLM 配置（沿用你现有的 Ollama 设置）
+# Ollama 配置（远程服务器）
 # ============================================================
-llm = ChatOllama(
-    base_url="http://10.8.20.83:11435",
-    model="qwen3.6:27b",
-    temperature=0.2,
-)
+OLLAMA_HOST = "http://10.8.20.83:11435"
+MODEL = "qwen3.6:27b"
+TEMPERATURE = 0.2
 
-system_prompt = SystemMessage(content=f"""
-   你是一个具备深厚逻辑推理能力的大语言模型。
-    无论用户提出什么问题，你都【必须】严格按照以下格式回答：
+# 原生异步客户端：qwen3.6 会把"思考过程"放在 thinking 字段、
+# "正式回答"放在 content 字段，两个字段都通过流式逐 token 返回。
+# （注意：langchain 的 ChatOllama 会丢弃 thinking 字段，所以这里用原生客户端）
+client = ollama.AsyncClient(host=OLLAMA_HOST)
 
-    <think>
-    在这里写下你的详细思考过程、逻辑拆解、边界条件分析与方案对比。
-    </think>
+SYSTEM_PROMPT = """你是一个具备深厚逻辑推理能力的大语言模型。
+无论用户提出什么问题，你都应该先深入思考再回答：
 
-    在这里给出最终对用户展示的正式回答。""")
+1. 在内部拆解问题：用户真正想要什么？
+2. 分析边界条件：问题的前提、限制与可能的多义性。
+3. 对比不同方案：列出可行思路，说明各自的优劣，再选出最佳方案。
+4. 然后给出简洁、准确、结构清晰的最终回答。
+
+思考过程由系统自动捕捉并展示，你不需要输出任何标签或标记。
+直接给出最终回答即可。"""
 
 
 # ============================================================
@@ -48,7 +51,10 @@ async def chat(request: Request):
     接收用户消息，通过 SSE 流式返回 LLM 输出。
 
     前端 fetch 请求体: {"message": "你好"}
-    响应: text/event-stream，每个 chunk 一个 SSE data 行
+    响应: text/event-stream，包含两类事件：
+      {"type": "thinking", "content": "<token>"}  思考过程（逐 token）
+      {"type": "content",  "content": "<token>"}  正式回答（逐 token）
+      {"type": "done"}                              流结束
     """
     body = await request.json()
     user_message = body.get("message", "").strip()
@@ -58,27 +64,38 @@ async def chat(request: Request):
             media_type="text/event-stream",
         )
 
-    messages = [system_prompt, HumanMessage(content=user_message)]
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
 
     async def event_stream():
         """
-        SSE 事件流生成器。
-
-        每条事件格式:
-          data: {"content": "<token>", "done": false}
-          data: {"content": "", "done": true}
+        SSE 事件流生成器：把模型流式输出拆成 thinking / content 两条通道。
         """
         try:
-            async for chunk in llm.astream(messages):
-                content = chunk.content
-                if content:
-                    yield _sse_event({"content": content, "done": False})
+            async for part in await client.chat(
+                model=MODEL,
+                messages=messages,
+                stream=True,
+                options={"temperature": TEMPERATURE},
+            ):
+                thinking = getattr(part.message, "thinking", "") or ""
+                content = part.message.content or ""
 
-            # 流结束，发送完成信号
-            yield _sse_event({"content": "", "done": True})
+                if thinking:
+                    yield _sse_event({"type": "thinking", "content": thinking})
+                if content:
+                    yield _sse_event({"type": "content", "content": content})
+
+                if part.done:
+                    break
+
+            yield _sse_event({"type": "done"})
 
         except Exception as e:
-            yield _sse_event({"content": f"\n[错误] {str(e)}", "done": True})
+            yield _sse_event({"type": "error", "content": str(e)})
+            yield _sse_event({"type": "done"})
 
     return StreamingResponse(
         event_stream(),
@@ -102,7 +119,8 @@ def _sse_event(data: dict) -> str:
 
 async def _empty_stream(msg: str):
     """快速返回一条错误消息后结束"""
-    yield _sse_event({"content": msg, "done": True})
+    yield _sse_event({"type": "error", "content": msg})
+    yield _sse_event({"type": "done"})
 
 
 # ============================================================
