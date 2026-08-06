@@ -1,10 +1,8 @@
 from typing import TypedDict, List
-from urllib import response
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import StateGraph, START, END
 from dotenv import load_dotenv
-from numpy import rint # used to store secret stuff like API keys or configuration values
 
 load_dotenv()
 
