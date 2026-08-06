@@ -72,6 +72,22 @@
             padding: 4px 10px;
             border-radius: 12px;
         }
+        .new-chat-btn {
+            background: var(--surface2);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 6px 14px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: background 0.2s;
+            flex-shrink: 0;
+        }
+        .new-chat-btn:hover {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+        }
 
         /* ---- messages ---- */
         #messages {
@@ -169,6 +185,12 @@
         }
         .answer-area {
             white-space: pre-wrap;
+        }
+        .tool-status {
+            color: var(--text-dim);
+            font-size: 0.8rem;
+            padding: 2px 0;
+            font-family: ui-monospace, monospace;
         }
 
         .msg .bubble .cursor {
@@ -269,6 +291,7 @@
             <span class="dot"></span>
             <h1>LangGraph Chat</h1>
             <span class="model">qwen3.6:27b</span>
+            <button class="new-chat-btn" onclick="newChat()">＋ 新会话</button>
         </header>
 
         <div id="messages"></div>
@@ -288,6 +311,27 @@
 
         let isStreaming = false;
         let currentBotBubble = null; // 当前正在流式写入的气泡 DOM
+
+        // ============ 会话管理 ============
+
+        // 会话 ID：localStorage 持久化，刷新页面后仍保持同一会话记忆
+        const SESSION_KEY = 'langgraph_session_id';
+        let sessionId = localStorage.getItem(SESSION_KEY) || genSessionId();
+        localStorage.setItem(SESSION_KEY, sessionId);
+
+        function genSessionId() {
+            return 's-' + Date.now().toString(36) + '-' +
+                Math.random().toString(36).slice(2, 10);
+        }
+
+        /** 开始一个新会话：重置 session_id + 清空聊天区 */
+        function newChat() {
+            if (isStreaming) return;
+            sessionId = genSessionId();
+            localStorage.setItem(SESSION_KEY, sessionId);
+            messagesEl.innerHTML = '';
+            inputEl.focus();
+        }
 
         // ============ 渲染函数 ============
 
@@ -383,6 +427,17 @@
             scrollToBottom();
         }
 
+        /** 工具调用进度：在答案区上方以灰色小字显示 */
+        function appendToolStatus(bubbleEl, text) {
+            removeIndicator(bubbleEl);
+            const ans = ensureAnswerEl(bubbleEl);
+            const span = document.createElement('div');
+            span.className = 'tool-status';
+            span.textContent = text;
+            ans.appendChild(span);
+            scrollToBottom();
+        }
+
         /** 流结束时调用：去掉光标，固定最终渲染 */
         function finalizeBotBubble(bubbleEl) {
             const cursor = bubbleEl.querySelector('.cursor');
@@ -418,7 +473,7 @@
                 const response = await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text }),
+                    body: JSON.stringify({ message: text, session_id: sessionId }),
                 });
 
                 if (!response.ok) {
@@ -456,6 +511,9 @@
                                 } else if (payload.type === 'content') {
                                     // 正式回答 → 答案区
                                     appendAnswer(currentBotBubble, payload.content);
+                                } else if (payload.type === 'tool_status') {
+                                    // 工具调用进度 → 答案区上方灰色小字
+                                    appendToolStatus(currentBotBubble, payload.content);
                                 } else if (payload.type === 'error') {
                                     appendAnswer(currentBotBubble, `\n\n❌ ${payload.content}`);
                                 }
