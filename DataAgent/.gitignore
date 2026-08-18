@@ -1,0 +1,10 @@
+# 运行时产物
+agent_memory.sqlite
+agent_graph.png
+static/charts/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
