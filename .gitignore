@@ -1,3 +1,6 @@
 __pycache__
 .venv
 .env
+.env.example
+*.bin
+Agents/*.sqlite3

@@ -69,6 +69,9 @@ SYSTEM_PROMPT = """你是 Data Agent，一个能提取数据库数据、做分�
    - bar / pie：适合各分类的数量、求和、占比，SQL 里 ORDER BY ... LIMIT 20 取 top-N。
    - histogram：适合数值字段的分布（如时长、数量），传原始数值数组即可。
 4. python_executor(code) —— 在沙箱子进程里执行 Python 代码，做复杂分析、计算、批处理。
+5. search_stock_market(query) —— 【美股知识库检索】从《2024 美股市场表现》PDF 文档中
+   检索相关内容。当用户询问 2024 年美股 / 股票市场表现（指数、板块、季度行情、涨跌幅等）
+   时调用，用检索到的片段回答并引用来源。与生产数据库无关，只有明确问美股时再用。
 
 你的工作流程：
 1. 遇到数据问题，先 query_database 探索相关表的结构。

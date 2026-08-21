@@ -9,3 +9,10 @@ python-dotenv
 psycopg2-binary
 matplotlib
 langgraph-checkpoint-sqlite
+# RAG 工具（tools/rag.py）依赖
+langchain-community
+langchain-chroma
+langchain-ollama
+langchain-text-splitters
+pypdf
+chromadb
