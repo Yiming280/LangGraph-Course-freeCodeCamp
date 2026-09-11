@@ -67,7 +67,7 @@ sudo kill [PID]
 
 ```
 浏览器 → POST /chat (session_id) → LangGraph astream
-  ├─ custom 流：model 节点 writer 逐 token 推 {type: thinking/content/tool_status/chart}
+  ├─ custom 流：model 节点 writer 逐 token 推 {type: thinking/content/tool_call/tool_result/chart}
   └─ SSE:  data: {...}
 ```
 
@@ -76,8 +76,9 @@ sudo kill [PID]
 | type | 含义 |
 |---|---|
 | `thinking` | 思考过程（逐 token） |
-| `content` | 正式回答（逐 token） |
-| `tool_status` | 工具调用进度 |
+| `content` | 最终回答（逐 token，Markdown） |
+| `tool_call` | 工具调用（含 `name` 与 `args` 入参，如 SQL/code） |
+| `tool_result` | 执行结果（含 `name`/`content`/`error`） |
 | `chart` | 生成的图表图片 URL |
 | `done` / `error` | 流结束 / 错误 |
 
