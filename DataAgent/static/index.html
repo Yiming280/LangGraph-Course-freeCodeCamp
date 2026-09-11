@@ -64,13 +64,30 @@
             font-size: 1.1rem;
             font-weight: 600;
         }
-        header .model {
+        header .model-select {
             margin-left: auto;
             font-size: 0.75rem;
-            color: var(--text-dim);
+            color: var(--text);
             background: var(--surface2);
-            padding: 4px 10px;
+            border: 1px solid var(--border);
+            padding: 4px 8px;
             border-radius: 12px;
+            outline: none;
+            cursor: pointer;
+        }
+        header .api-key-input {
+            font-size: 0.72rem;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 4px 8px;
+            width: 140px;
+            outline: none;
+            display: none;
+        }
+        header .api-key-input.show {
+            display: inline-block;
         }
         .new-chat-btn {
             background: var(--surface2);
@@ -184,14 +201,138 @@
             white-space: pre-wrap;
         }
         .answer-area {
-            white-space: pre-wrap;
+            white-space: normal;
         }
-        .tool-status {
+
+        /* ---- 工具调用折叠块 ---- */
+        .tools-block {
+            background: rgba(74, 222, 128, 0.06);
+            border-left: 3px solid #4ade80;
+            border-radius: 4px 8px 8px 4px;
+            padding: 10px 14px;
+            margin-bottom: 12px;
             color: var(--text-dim);
-            font-size: 0.8rem;
-            padding: 2px 0;
-            font-family: ui-monospace, monospace;
+            font-size: 0.9rem;
         }
+        .tools-block > summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #4ade80;
+            margin-bottom: 6px;
+            user-select: none;
+        }
+        .tool-item {
+            margin: 6px 0;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 6px 10px;
+        }
+        .tool-item summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--text);
+            user-select: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .tool-code-label, .tool-result-label {
+            display: block;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-dim);
+            margin: 8px 0 2px;
+        }
+        .tool-code, .tool-result {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.78rem;
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 10px;
+            margin: 0;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #c9d1d9;
+        }
+        .tool-result.error {
+            color: #f87171;
+            border-color: rgba(248, 113, 113, 0.4);
+        }
+
+        /* ---- Markdown 渲染样式 ---- */
+        .answer-area h1, .answer-area h2, .answer-area h3,
+        .answer-area h4, .answer-area h5, .answer-area h6 {
+            margin: 14px 0 8px;
+            line-height: 1.3;
+            color: var(--text);
+        }
+        .answer-area h1 { font-size: 1.4rem; }
+        .answer-area h2 { font-size: 1.25rem; }
+        .answer-area h3 { font-size: 1.1rem; }
+        .answer-area h4 { font-size: 1rem; }
+        .answer-area p { margin: 6px 0; }
+        .answer-area ul, .answer-area ol { margin: 6px 0; padding-left: 22px; }
+        .answer-area li { margin: 3px 0; }
+        .answer-area code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.85em;
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1px 5px;
+            color: #fbbf24;
+        }
+        .answer-area pre {
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 12px;
+            overflow-x: auto;
+            white-space: pre;
+            margin: 8px 0;
+        }
+        .answer-area pre code {
+            background: transparent;
+            border: none;
+            padding: 0;
+            color: #c9d1d9;
+            font-size: 0.82rem;
+        }
+        .answer-area table {
+            border-collapse: collapse;
+            margin: 8px 0;
+            width: 100%;
+        }
+        .answer-area th, .answer-area td {
+            border: 1px solid var(--border);
+            padding: 6px 10px;
+            text-align: left;
+        }
+        .answer-area th {
+            background: rgba(255, 255, 255, 0.05);
+            font-weight: 600;
+        }
+        .answer-area blockquote {
+            border-left: 3px solid var(--accent);
+            margin: 8px 0;
+            padding: 2px 12px;
+            color: var(--text-dim);
+        }
+        .answer-area a {
+            color: #60a5fa;
+            text-decoration: none;
+        }
+        .answer-area a:hover { text-decoration: underline; }
+        .answer-area hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 12px 0;
+        }
+        .answer-area strong { font-weight: 700; color: var(--text); }
 
         /* 图表图片 */
         .chart-image {
@@ -264,6 +405,12 @@
             opacity: 0.4;
             cursor: not-allowed;
         }
+        #sendBtn.stop-mode {
+            background: #b45309;
+        }
+        #sendBtn.stop-mode:hover {
+            background: #d97706;
+        }
 
         /* ---- thinking 状态 ---- */
         .thinking-indicator {
@@ -312,6 +459,137 @@
             border-radius: 8px;
             background: #fff;
         }
+
+        /* ---- 数据库管理弹窗 ---- */
+        .db-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .db-modal.show { display: flex; }
+        .db-panel {
+            width: 90%;
+            max-width: 560px;
+            max-height: 86vh;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .db-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .db-header h2 { font-size: 1.05rem; font-weight: 600; }
+        .db-close {
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            font-size: 1.1rem;
+            cursor: pointer;
+        }
+        .db-close:hover { color: var(--text); }
+        .db-body {
+            padding: 16px 18px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .db-list { display: flex; flex-direction: column; gap: 8px; }
+        .db-card {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            background: rgba(0, 0, 0, 0.15);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .db-card .db-info { flex: 1; min-width: 0; }
+        .db-card .db-alias { font-weight: 600; font-size: 0.9rem; }
+        .badge {
+            font-size: 0.62rem;
+            font-weight: 500;
+            padding: 1px 6px;
+            border-radius: 8px;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
+        .badge.default { background: var(--accent); color: #fff; }
+        .badge.env { background: var(--surface2); color: var(--text-dim); }
+        .badge.user { background: #4ade80; color: #052e16; }
+        .db-card .db-meta { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; word-break: break-all; }
+        .db-card .db-actions { display: flex; gap: 6px; flex-shrink: 0; }
+        .db-actions button {
+            background: var(--surface2);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 4px 10px;
+            font-size: 0.72rem;
+            cursor: pointer;
+        }
+        .db-actions button:hover { border-color: var(--accent); }
+        .db-actions button.danger:hover { border-color: #f87171; color: #f87171; }
+        .db-add-btn {
+            background: var(--surface2);
+            color: var(--text);
+            border: 1px dashed var(--border);
+            border-radius: 10px;
+            padding: 10px;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+        .db-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .db-form {
+            padding: 14px 18px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+        .db-form h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 4px; }
+        .db-form label { font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; }
+        .db-form .req { color: var(--accent); }
+        .db-form input {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 0.85rem;
+            outline: none;
+        }
+        .db-form input:focus { border-color: var(--accent); }
+        .db-form-actions { display: flex; gap: 8px; margin-top: 10px; }
+        .db-btn {
+            flex: 1;
+            border: none;
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .db-btn.db-test { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+        .db-btn.db-save { background: var(--accent); color: #fff; }
+        .db-btn.db-cancel { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border); }
+        .db-test-result { font-size: 0.8rem; margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
+        .db-test-result.ok { color: #4ade80; }
+        .db-test-result.err { color: #f87171; }
     </style>
 </head>
 <body>
@@ -319,7 +597,13 @@
         <header>
             <span class="dot"></span>
             <h1>Data Agent</h1>
-            <span class="model">qwen3.6:27b</span>
+            <select id="modelSelect" class="model-select" title="选择模型">
+                <option value="ollama">qwen3.6:27b</option>
+                <option value="openai">qwen3.5:9b</option>
+            </select>
+            <input id="apiKey" class="api-key-input" type="password" placeholder="API Key（可选）"
+                title="留空使用服务器默认 Key" autocomplete="off">
+            <button class="new-chat-btn" onclick="openDbModal()">🗄 数据库</button>
             <button class="new-chat-btn" onclick="newChat()">＋ 新会话</button>
         </header>
 
@@ -329,7 +613,7 @@
             <textarea id="input" rows="1"
                 placeholder="输入问题，例如：分析 t_device_statistical_metrics，画个柱状图（Enter 发送，Shift+Enter 换行）"
                 oninput="this.style.height='';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
-            <button id="sendBtn" onclick="send()">发送</button>
+            <button id="sendBtn" onclick="onSend()">发送</button>
         </footer>
     </div>
 
@@ -338,15 +622,266 @@
         <img id="lightboxImg" src="" alt="">
     </div>
 
+    <!-- 数据库管理弹窗 -->
+    <div class="db-modal" id="dbModal">
+        <div class="db-panel">
+            <div class="db-header">
+                <h2>数据库管理</h2>
+                <button class="db-close" onclick="closeDbModal()">✕</button>
+            </div>
+            <div class="db-body">
+                <div id="dbList" class="db-list"></div>
+                <button class="db-add-btn" onclick="openDbForm()">＋ 新增数据库</button>
+            </div>
+            <div class="db-form" id="dbForm" style="display:none">
+                <h3 id="dbFormTitle">新增数据库</h3>
+                <label>别名 <span class="req">*</span></label>
+                <input id="dbAlias" placeholder="如 warehouse（英文/数字/下划线）">
+                <label>用途描述</label>
+                <input id="dbDesc" placeholder="帮助 agent 理解库用途（可选）">
+                <label>主机地址 <span class="req">*</span></label>
+                <input id="dbHost" placeholder="如 10.8.8.233">
+                <label>端口</label>
+                <input id="dbPort" type="number" placeholder="默认 5432">
+                <label>数据库名</label>
+                <input id="dbName" placeholder="如 agile_dispatch">
+                <label>用户名</label>
+                <input id="dbUser" placeholder="如 postgres">
+                <label>密码</label>
+                <input id="dbPassword" type="password" placeholder="编辑时留空则不改密码" autocomplete="new-password">
+                <div class="db-form-actions">
+                    <button class="db-btn db-test" onclick="testDb()">测试连接</button>
+                    <button class="db-btn db-save" onclick="saveDb()">保存</button>
+                    <button class="db-btn db-cancel" onclick="closeDbForm()">取消</button>
+                </div>
+                <div id="dbTestResult" class="db-test-result"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const messagesEl = document.getElementById('messages');
         const inputEl = document.getElementById('input');
         const sendBtn = document.getElementById('sendBtn');
         const lightbox = document.getElementById('lightbox');
         const lightboxImg = document.getElementById('lightboxImg');
+        const modelSelect = document.getElementById('modelSelect');
+        const apiKeyEl = document.getElementById('apiKey');
+
+        // ============ 模型选择 + Key 持久化 ============
+        const MODEL_KEY = 'data_agent_model';
+        const APIKEY_KEY = 'data_agent_api_key';
+        let modelNeedsKey = { ollama: false, openai: true }; // id -> 是否需要 API Key
+
+        /** 从后端 /models 拉取可用后端，填充下拉框并恢复上次选择 */
+        async function loadModels() {
+            try {
+                const res = await fetch('/models');
+                const data = await res.json();
+                const models = data.models || [];
+                if (!models.length) return;
+
+                modelSelect.innerHTML = '';
+                modelNeedsKey = {};
+                models.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.id;
+                    opt.textContent = m.label;
+                    opt.title = m.hint || '';
+                    modelSelect.appendChild(opt);
+                    modelNeedsKey[m.id] = !!m.needs_key;
+                });
+
+                const saved = localStorage.getItem(MODEL_KEY);
+                if (saved && models.some(m => m.id === saved)) {
+                    modelSelect.value = saved;
+                } else if (data.default) {
+                    modelSelect.value = data.default;
+                }
+
+                const savedKey = localStorage.getItem(APIKEY_KEY);
+                if (savedKey) apiKeyEl.value = savedKey;
+                syncApiKeyVisibility();
+            } catch (e) {
+                // 拉取失败时用 HTML 里的静态兜底项，不影响使用
+                syncApiKeyVisibility();
+            }
+        }
+
+        /** 只有需要 Key 的后端（openai）才显示 Key 输入框 */
+        function syncApiKeyVisibility() {
+            apiKeyEl.classList.toggle('show', !!modelNeedsKey[modelSelect.value]);
+        }
+
+        modelSelect.addEventListener('change', () => {
+            localStorage.setItem(MODEL_KEY, modelSelect.value);
+            syncApiKeyVisibility();
+        });
+        apiKeyEl.addEventListener('input', () => {
+            localStorage.setItem(APIKEY_KEY, apiKeyEl.value);
+        });
+
+        // ============ 数据库管理 ============
+        async function openDbModal() {
+            document.getElementById('dbModal').classList.add('show');
+            await refreshDbList();
+        }
+
+        function closeDbModal() {
+            document.getElementById('dbModal').classList.remove('show');
+            closeDbForm();
+        }
+
+        async function refreshDbList() {
+            const listEl = document.getElementById('dbList');
+            try {
+                const res = await fetch('/databases');
+                const data = await res.json();
+                const dbs = data.databases || [];
+                if (!dbs.length) {
+                    listEl.innerHTML = '<div class="db-meta" style="text-align:center;padding:10px">尚未配置任何数据库</div>';
+                    return;
+                }
+                listEl.innerHTML = '';
+                dbs.forEach(db => {
+                    const card = document.createElement('div');
+                    card.className = 'db-card';
+                    const badges = [];
+                    if (db.is_default) badges.push('<span class="badge default">默认</span>');
+                    badges.push(db.source === 'env'
+                        ? '<span class="badge env">环境变量</span>'
+                        : '<span class="badge user">网页新增</span>');
+                    const pwd = db.has_password ? '已设置' : '未设置';
+                    const actions = db.source === 'user'
+                        ? `<button onclick="editDb('${escapeAttr(db.alias)}')">编辑</button>
+                           <button class="danger" onclick="deleteDb('${escapeAttr(db.alias)}')">删除</button>`
+                        : '<span class="db-meta">只读</span>';
+                    card.innerHTML = `
+                        <div class="db-info">
+                            <div class="db-alias">${escapeHtml(db.alias)}${badges.join('')}</div>
+                            <div class="db-meta">${escapeHtml(db.description || '—')}</div>
+                            <div class="db-meta">${escapeHtml(db.host)}:${escapeHtml(String(db.port))}/${escapeHtml(db.dbname)} · ${escapeHtml(db.user)} · 密码${pwd}</div>
+                        </div>
+                        <div class="db-actions">${actions}</div>
+                    `;
+                    listEl.appendChild(card);
+                });
+            } catch (e) {
+                listEl.innerHTML = `<div class="db-meta">加载失败: ${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function openDbForm() {
+            document.getElementById('dbFormTitle').textContent = '新增数据库';
+            ['dbAlias', 'dbDesc', 'dbHost', 'dbPort', 'dbName', 'dbUser', 'dbPassword'].forEach(id =>
+                document.getElementById(id).value = '');
+            document.getElementById('dbAlias').disabled = false;
+            document.getElementById('dbPassword').placeholder = '';
+            document.getElementById('dbTestResult').textContent = '';
+            document.getElementById('dbTestResult').className = 'db-test-result';
+            document.getElementById('dbForm').style.display = 'flex';
+        }
+
+        async function editDb(alias) {
+            document.getElementById('dbFormTitle').textContent = '编辑 ' + alias;
+            document.getElementById('dbTestResult').textContent = '';
+            document.getElementById('dbTestResult').className = 'db-test-result';
+            document.getElementById('dbForm').style.display = 'flex';
+
+            const res = await fetch('/databases');
+            const data = await res.json();
+            const db = (data.databases || []).find(d => d.alias === alias);
+            if (!db) return;
+
+            document.getElementById('dbAlias').value = db.alias;
+            document.getElementById('dbAlias').disabled = true; // 别名不可改
+            document.getElementById('dbDesc').value = db.description || '';
+            document.getElementById('dbHost').value = db.host || '';
+            document.getElementById('dbPort').value = db.port || '';
+            document.getElementById('dbName').value = db.dbname || '';
+            document.getElementById('dbUser').value = db.user || '';
+            document.getElementById('dbPassword').value = '';
+            document.getElementById('dbPassword').placeholder = db.has_password ? '留空则保留原密码' : '';
+        }
+
+        function closeDbForm() {
+            document.getElementById('dbForm').style.display = 'none';
+            document.getElementById('dbAlias').disabled = false;
+        }
+
+        function dbFormValues() {
+            return {
+                alias: document.getElementById('dbAlias').value.trim(),
+                description: document.getElementById('dbDesc').value.trim(),
+                host: document.getElementById('dbHost').value.trim(),
+                port: document.getElementById('dbPort').value.trim() || '5432',
+                dbname: document.getElementById('dbName').value.trim(),
+                user: document.getElementById('dbUser').value.trim(),
+                password: document.getElementById('dbPassword').value,
+            };
+        }
+
+        async function testDb() {
+            const resultEl = document.getElementById('dbTestResult');
+            resultEl.textContent = '正在测试连接…';
+            resultEl.className = 'db-test-result';
+            try {
+                const res = await fetch('/databases/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(dbFormValues()),
+                });
+                const data = await res.json();
+                resultEl.textContent = data.message || (data.ok ? '连接成功' : '失败');
+                resultEl.className = 'db-test-result ' + (data.ok ? 'ok' : 'err');
+            } catch (e) {
+                resultEl.textContent = '测试请求失败: ' + e.message;
+                resultEl.className = 'db-test-result err';
+            }
+        }
+
+        async function saveDb() {
+            const vals = dbFormValues();
+            const resultEl = document.getElementById('dbTestResult');
+            if (!vals.alias || !vals.host) {
+                resultEl.textContent = '别名和主机地址必填';
+                resultEl.className = 'db-test-result err';
+                return;
+            }
+            try {
+                const res = await fetch('/databases', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(vals),
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    closeDbForm();
+                    await refreshDbList();
+                } else {
+                    resultEl.textContent = data.error || '保存失败';
+                    resultEl.className = 'db-test-result err';
+                }
+            } catch (e) {
+                resultEl.textContent = '保存失败: ' + e.message;
+                resultEl.className = 'db-test-result err';
+            }
+        }
+
+        async function deleteDb(alias) {
+            if (!confirm('确定删除数据库「' + alias + '」吗？')) return;
+            await fetch('/databases/' + encodeURIComponent(alias), { method: 'DELETE' });
+            await refreshDbList();
+        }
+
+        function escapeAttr(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        }
 
         let isStreaming = false;
         let currentBotBubble = null; // 当前正在流式写入的气泡 DOM
+        let abortController = null;   // 用于「停止生成」时中止 fetch
+        let stoppedManually = false;  // 是否由用户主动停止（区别于网络错误）
 
         // ============ 会话管理 ============
 
@@ -384,10 +919,12 @@
 
         /**
          * 创建一个空的 bot 气泡，返回该气泡的 DOM 元素。
-         * 后端把模型输出拆成两条通道：
-         *   thinking → 折叠的"思考过程"块（details）
-         *   content  → 正文答案区
-         *   chart    → 图表图片
+         * 后端把模型输出拆成多条通道：
+         *   thinking     → 折叠的"思考过程"块（details）
+         *   tool_call    → "工具调用"折叠块里的一次调用（含 SQL/code）
+         *   tool_result  → 该次调用的执行结果
+         *   chart        → 图表图片（放进所属工具块）
+         *   content      → 最终回答（Markdown 渲染）
          * 这里只维护容器的懒创建与追加。
          */
         function createBotBubble() {
@@ -402,8 +939,11 @@
             messagesEl.appendChild(div);
             scrollToBottom();
             const bubbleEl = div.querySelector('.bubble');
-            bubbleEl._thinkBody = null;   // details 里的思考正文容器
-            bubbleEl._answerEl = null;    // 正式回答容器
+            bubbleEl._thinkBody = null;        // details 里的思考正文容器
+            bubbleEl._toolsBody = null;        // 工具调用折叠块正文容器
+            bubbleEl._answerEl = null;         // 最终回答容器
+            bubbleEl._mdText = '';             // 累积的最终回答原始 Markdown
+            bubbleEl._currentToolItem = null;  // 最近一次工具调用的 tool-item
             return bubbleEl;
         }
 
@@ -452,10 +992,11 @@
             scrollToBottom();
         }
 
-        /** content 通道：追加到答案区，末尾带闪烁光标 */
+        /** content 通道：累积 Markdown，重渲染进答案区，末尾带闪烁光标 */
         function appendAnswer(bubbleEl, text) {
             const ans = ensureAnswerEl(bubbleEl);
-            ans.textContent += text;
+            bubbleEl._mdText += text;
+            ans.innerHTML = renderMarkdown(bubbleEl._mdText);
             const oldCursor = ans.querySelector('.cursor');
             if (oldCursor) oldCursor.remove();
             const cursor = document.createElement('span');
@@ -464,21 +1005,108 @@
             scrollToBottom();
         }
 
-        /** 工具调用进度：在答案区上方以灰色小字显示 */
-        function appendToolStatus(bubbleEl, text) {
+        /** 懒创建"工具调用"折叠块（置于思考块之后、答案区之前） */
+        function ensureToolsBlock(bubbleEl) {
             removeIndicator(bubbleEl);
-            const ans = ensureAnswerEl(bubbleEl);
-            const span = document.createElement('div');
-            span.className = 'tool-status';
-            span.textContent = text;
-            ans.appendChild(span);
+            if (!bubbleEl._toolsBody) {
+                const details = document.createElement('details');
+                details.className = 'tools-block';
+                details.open = true;
+
+                const summary = document.createElement('summary');
+                summary.textContent = '🔧 工具调用';
+
+                const body = document.createElement('div');
+                body.className = 'tools-body';
+
+                details.appendChild(summary);
+                details.appendChild(body);
+
+                const ans = bubbleEl._answerEl;
+                if (ans) bubbleEl.insertBefore(details, ans);
+                else bubbleEl.appendChild(details);
+                bubbleEl._toolsBody = body;
+            }
+            return bubbleEl._toolsBody;
+        }
+
+        /** 从工具入参里提取要展示的"代码"（SQL / Python / 其它 JSON） */
+        function extractToolCode(args) {
+            if (args && typeof args === 'object') {
+                if (typeof args.sql === 'string') return args.sql;
+                if (typeof args.code === 'string') return args.code;
+            }
+            try {
+                return JSON.stringify(args, null, 2);
+            } catch (e) {
+                return String(args);
+            }
+        }
+
+        /** tool_call 通道：新建一个工具调用折叠块，展示工具名 + 代码 */
+        function onToolCall(bubbleEl, name, args) {
+            const tools = ensureToolsBlock(bubbleEl);
+            const item = document.createElement('details');
+            item.className = 'tool-item';
+            item.open = true;
+
+            const summary = document.createElement('summary');
+            const icon = document.createElement('span');
+            icon.className = 'tool-status-icon';
+            icon.textContent = '⏳';
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = '🔧 ' + name;
+            summary.appendChild(icon);
+            summary.appendChild(nameSpan);
+
+            const body = document.createElement('div');
+            body.className = 'tool-body';
+
+            const code = extractToolCode(args);
+            if (code) {
+                const label = document.createElement('span');
+                label.className = 'tool-code-label';
+                label.textContent = '代码 / 入参';
+                const pre = document.createElement('pre');
+                pre.className = 'tool-code';
+                pre.textContent = code;
+                body.appendChild(label);
+                body.appendChild(pre);
+            }
+
+            item.appendChild(summary);
+            item.appendChild(body);
+            tools.appendChild(item);
+
+            bubbleEl._currentToolItem = item;
             scrollToBottom();
         }
 
-        /** 图表通道：在答案区插入一张图片，点击可放大查看 */
+        /** tool_result 通道：把执行结果追加进最近一次工具调用的折叠块 */
+        function onToolResult(bubbleEl, name, content, isError) {
+            const item = bubbleEl._currentToolItem;
+            if (!item) return;
+
+            const icon = item.querySelector('.tool-status-icon');
+            if (icon) icon.textContent = isError ? '❌' : '✅';
+
+            const body = item.querySelector('.tool-body');
+            if (body && content != null && content !== '') {
+                const label = document.createElement('span');
+                label.className = 'tool-result-label';
+                label.textContent = '执行结果';
+                const pre = document.createElement('pre');
+                pre.className = 'tool-result' + (isError ? ' error' : '');
+                pre.textContent = content;
+                body.appendChild(label);
+                body.appendChild(pre);
+            }
+            scrollToBottom();
+        }
+
+        /** 图表通道：把图片放进最近一次工具调用的结果区，点击可放大 */
         function appendChart(bubbleEl, url) {
-            removeIndicator(bubbleEl);
-            const ans = ensureAnswerEl(bubbleEl);
+            const item = bubbleEl._currentToolItem;
             const img = document.createElement('img');
             img.className = 'chart-image';
             img.src = url;
@@ -487,16 +1115,178 @@
                 lightboxImg.src = url;
                 lightbox.style.display = 'flex';
             };
-            ans.appendChild(img);
+            if (item) {
+                item.querySelector('.tool-body').appendChild(img);
+            } else {
+                // 兜底：没有工具块时直接放进答案区
+                ensureAnswerEl(bubbleEl).appendChild(img);
+            }
             scrollToBottom();
         }
 
-        /** 流结束时调用：去掉光标，固定最终渲染 */
+        /** 流结束时调用：去掉光标，清理临时指针 */
         function finalizeBotBubble(bubbleEl) {
             const cursor = bubbleEl.querySelector('.cursor');
             if (cursor) cursor.remove();
             bubbleEl._thinkBody = null;
+            bubbleEl._toolsBody = null;
             bubbleEl._answerEl = null;
+            bubbleEl._mdText = '';
+            bubbleEl._currentToolItem = null;
+        }
+
+        // ============ Markdown 迷你渲染器 ============
+
+        /**
+         * 把模型输出的 Markdown 渲染成安全的 HTML。
+         * 顺序：抽代码块（占位符保护）→ HTML 转义 → 块级 → 内联 → 还原代码块。
+         */
+        function renderMarkdown(src) {
+            if (!src) return '';
+
+            // 1) 抽取 fenced code block，用占位符保护（避免代码内容被内联规则污染）
+            const codeBlocks = [];
+            let text = src.replace(/```([^\n`]*)\n?([\s\S]*?)(?:```|$)/g, (m, lang, code) => {
+                const idx = codeBlocks.length;
+                codeBlocks.push({ lang: (lang || '').trim(), code });
+                return '@CODE' + idx + '@';
+            });
+
+            // 2) HTML 转义
+            text = escapeHtml(text);
+
+            // 3) 块级解析
+            const blocks = text.split(/\n{2,}/);
+            const out = [];
+            const codeToken = /^@CODE(\d+)@$/;
+
+            for (const rawBlock of blocks) {
+                const trimmed = rawBlock.trim();
+                const m = trimmed.match(codeToken);
+                if (m) {
+                    out.push(renderCodeBlock(codeBlocks[+m[1]]));
+                } else {
+                    out.push(renderBlock(rawBlock.split('\n')));
+                }
+            }
+
+            let html = out.join('\n');
+
+            // 4) 兜底还原任何残留占位符（如代码块嵌在段落内）
+            html = html.replace(/@CODE(\d+)@/g, (m, idx) =>
+                renderCodeBlock(codeBlocks[+idx]));
+
+            return html;
+        }
+
+        function renderCodeBlock(cb) {
+            if (!cb) return '';
+            const cls = cb.lang ? ' class="language-' + escapeHtml(cb.lang) + '"' : '';
+            return '<pre><code' + cls + '>' + escapeHtml(cb.code) + '</code></pre>';
+        }
+
+        function renderBlock(lines) {
+            const first = lines[0] || '';
+
+            // 标题
+            const h = first.match(/^(#{1,6})\s+(.*)$/);
+            if (h) {
+                const level = h[1].length;
+                return '<h' + level + '>' + renderInline(h[2]) + '</h' + level + '>';
+            }
+
+            // 分隔线
+            if (/^(-{3,}|\*{3,}|_{3,})$/.test(first.trim())) {
+                return '<hr>';
+            }
+
+            // 引用
+            if (first.trim().startsWith('>')) {
+                const content = lines.map(l => l.replace(/^\s*>\s?/, '')).join(' ');
+                return '<blockquote>' + renderInline(content) + '</blockquote>';
+            }
+
+            // 表格（连续以 | 开头，且第二行是分隔行）
+            if (first.includes('|') && lines.length >= 2 &&
+                /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[1]) && lines[1].includes('-')) {
+                return renderTable(lines);
+            }
+
+            // 无序列表
+            if (/^\s*[-*+]\s+/.test(first)) {
+                const items = [];
+                let i = 0;
+                while (i < lines.length) {
+                    const m = lines[i].match(/^\s*[-*+]\s+(.*)$/);
+                    if (!m) break;
+                    items.push('<li>' + renderInline(m[1]) + '</li>');
+                    i++;
+                }
+                return '<ul>' + items.join('') + '</ul>';
+            }
+
+            // 有序列表
+            if (/^\s*\d+\.\s+/.test(first)) {
+                const items = [];
+                let i = 0;
+                while (i < lines.length) {
+                    const m = lines[i].match(/^\s*\d+\.\s+(.*)$/);
+                    if (!m) break;
+                    items.push('<li>' + renderInline(m[1]) + '</li>');
+                    i++;
+                }
+                return '<ol>' + items.join('') + '</ol>';
+            }
+
+            // 普通段落（多行用 <br> 连接）
+            return '<p>' + lines.map(renderInline).join('<br>') + '</p>';
+        }
+
+        function renderTable(lines) {
+            const parseRow = (line) =>
+                line.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+
+            const header = parseRow(lines[0]);
+            const bodyRows = [];
+            for (let i = 2; i < lines.length; i++) {
+                if (!lines[i].trim()) continue;
+                bodyRows.push(parseRow(lines[i]));
+            }
+
+            let html = '<table><thead><tr>' +
+                header.map(c => '<th>' + renderInline(c) + '</th>').join('') +
+                '</tr></thead><tbody>';
+            for (const row of bodyRows) {
+                html += '<tr>' + row.map(c => '<td>' + renderInline(c) + '</td>').join('') + '</tr>';
+            }
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function renderInline(text) {
+            if (!text) return '';
+
+            // 行内码（`...`）——先处理，避免其中内容被后续规则误伤
+            text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+            // 加粗（先于斜体，避免 ** 被 * 拆坏）
+            text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            text = text.replace(/(^|[^\w_])__([^_]+)__(?=$|[^\w_])/g, '$1<strong>$2</strong>');
+
+            // 斜体（用边界判断避免误伤 SQL 里的下划线）
+            text = text.replace(/\*([^*\s][^*]*)\*/g, '<em>$1</em>');
+            text = text.replace(/(^|[^\w_])_([^_]+)_(?=$|[^\w_])/g, '$1<em>$2</em>');
+
+            // 删除线
+            text = text.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+
+            // 链接 [text](url)（过滤 javascript: 协议）
+            text = text.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, url) => {
+                const safe = url.replace(/^javascript:/i, '');
+                return '<a href="' + safe + '" target="_blank" rel="noopener">' + label + '</a>';
+            });
+
+            return text;
         }
 
         function escapeHtml(str) {
@@ -515,18 +1305,27 @@
             if (!text || isStreaming) return;
 
             isStreaming = true;
-            sendBtn.disabled = true;
+            stoppedManually = false;
+            setSendButton(true);
             inputEl.value = '';
             inputEl.style.height = '';
 
             addUserMessage(text);
             currentBotBubble = createBotBubble();
 
+            abortController = new AbortController();
+
             try {
                 const response = await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text, session_id: sessionId }),
+                    body: JSON.stringify({
+                        message: text,
+                        session_id: sessionId,
+                        provider: modelSelect.value,
+                        api_key: apiKeyEl.value.trim() || undefined,
+                    }),
+                    signal: abortController.signal,
                 });
 
                 if (!response.ok) {
@@ -562,13 +1361,16 @@
                                     // 思考过程 → 折叠块
                                     appendThinking(currentBotBubble, payload.content);
                                 } else if (payload.type === 'content') {
-                                    // 正式回答 → 答案区
+                                    // 最终回答 → Markdown 渲染进答案区
                                     appendAnswer(currentBotBubble, payload.content);
-                                } else if (payload.type === 'tool_status') {
-                                    // 工具调用进度 → 答案区上方灰色小字
-                                    appendToolStatus(currentBotBubble, payload.content);
+                                } else if (payload.type === 'tool_call') {
+                                    // 工具调用 → 折叠块（含 SQL/code）
+                                    onToolCall(currentBotBubble, payload.name, payload.args);
+                                } else if (payload.type === 'tool_result') {
+                                    // 执行结果 → 追加进该工具折叠块
+                                    onToolResult(currentBotBubble, payload.name, payload.content, payload.error);
                                 } else if (payload.type === 'chart') {
-                                    // 图表 → 答案区插入图片
+                                    // 图表 → 放进所属工具折叠块
                                     appendChart(currentBotBubble, payload.content);
                                 } else if (payload.type === 'error') {
                                     appendAnswer(currentBotBubble, `\n\n❌ ${payload.content}`);
@@ -578,6 +1380,8 @@
                     }
                 }
             } catch (err) {
+                // 主动停止会中止 fetch 抛 AbortError，这里不当作错误
+                if (stoppedManually) return;
                 if (currentBotBubble) {
                     appendAnswer(currentBotBubble, `\n\n❌ 请求失败: ${err.message}`);
                     finalizeBotBubble(currentBotBubble);
@@ -585,9 +1389,46 @@
                 }
             } finally {
                 isStreaming = false;
-                sendBtn.disabled = false;
+                setSendButton(false);
+                abortController = null;
                 inputEl.focus();
             }
+        }
+
+        /** 发送/停止 二合一：空闲时发送，流式时停止 */
+        function onSend() {
+            if (isStreaming) stop();
+            else send();
+        }
+
+        /** 流式时把「发送」按钮切换成「停止」 */
+        function setSendButton(streaming) {
+            sendBtn.textContent = streaming ? '停止' : '发送';
+            sendBtn.classList.toggle('stop-mode', streaming);
+        }
+
+        /** 停止生成：中止 SSE 请求，并通知后端取消该会话的生成任务 */
+        function stop() {
+            if (!isStreaming) return;
+            stoppedManually = true;
+            if (abortController) {
+                try { abortController.abort(); } catch (e) {}
+            }
+            fetch('/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId }),
+            }).catch(() => {});
+
+            if (currentBotBubble) {
+                appendAnswer(currentBotBubble, '\n\n⏹️ 已停止生成');
+                finalizeBotBubble(currentBotBubble);
+                currentBotBubble = null;
+            }
+            isStreaming = false;
+            setSendButton(false);
+            abortController = null;
+            inputEl.focus();
         }
 
         // ============ 键盘事件 ============
@@ -599,7 +1440,8 @@
             }
         });
 
-        // 页面加载后聚焦输入框
+        // 页面加载后：拉取可用模型 + 聚焦输入框
+        loadModels();
         inputEl.focus();
     </script>
 </body>
