@@ -4,3 +4,4 @@ __pycache__
 .env.example
 *.bin
 Agents/*.sqlite3
+*.sqlite-*
