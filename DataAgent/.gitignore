@@ -3,6 +3,7 @@ agent_memory.sqlite
 agent_graph.png
 static/charts/
 databases.json
+settings.json
 
 # Python
 __pycache__/
