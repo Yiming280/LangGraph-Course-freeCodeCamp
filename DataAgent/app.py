@@ -16,20 +16,32 @@ from typing import cast
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from agent import build_agent, build_system_prompt, available_models, DEFAULT_PROVIDER
-from tools._db_config import (
-    add_or_update_user_database,
-    delete_user_database,
+import memory as mem
+from agent import (
+    DEFAULT_PROVIDER,
+    available_models,
+    build_agent,
+    build_system_prompt,
+    format_llm_error,
+)
+from tools._settings import (
+    add_or_update_database,
+    delete_database,
     get_databases,
     get_default_alias,
+    get_iotdb,
+    get_log_dirs,
+    save_iotdb,
+    save_log_dirs,
 )
 from tools.database import test_connection
+from tools.iotdb import test_iotdb_connection
 
 load_dotenv()
 
@@ -49,6 +61,7 @@ async def lifespan(app: FastAPI):
     """
     async with AsyncSqliteSaver.from_conn_string(str(MEMORY_DB)) as checkpointer:
         app.state.agent = build_agent(checkpointer)
+        app.state.checkpointer = checkpointer
         print(f"✅ Data Agent ready, memory → {MEMORY_DB}")
         yield
 
@@ -101,7 +114,7 @@ async def save_database(request: Request):
     host = (body.get("host") or "").strip()
     if not alias or not host:
         return {"ok": False, "error": "别名和主机地址必填"}
-    add_or_update_user_database(
+    add_or_update_database(
         {
             "alias": alias,
             "description": body.get("description", ""),
@@ -117,10 +130,10 @@ async def save_database(request: Request):
 
 @app.delete("/databases/{alias}")
 async def remove_database(alias: str):
-    """删除一个网页端数据库（env 里的库不在其中，删不掉）。"""
-    ok = delete_user_database(alias)
+    """删除一个数据库（env 或网页配置均可删；env 库会记进 deleted 列表，跨重启持久）。"""
+    ok = delete_database(alias)
     if not ok:
-        return {"ok": False, "error": "该库不存在或来自 env，不可删除"}
+        return {"ok": False, "error": "该库不存在"}
     return {"ok": True}
 
 
@@ -140,6 +153,112 @@ async def test_database(request: Request):
     }
     ok, msg = await asyncio.to_thread(test_connection, cfg)
     return {"ok": ok, "message": msg}
+
+
+@app.get("/settings")
+async def get_settings():
+    """返回全部连接配置（数据库 + IoTDB + 日志目录）。密码只给 has_password 标记。"""
+    default = get_default_alias()
+    dbs = [
+        {
+            "alias": d["alias"],
+            "description": d.get("description", ""),
+            "host": d.get("host", ""),
+            "port": d.get("port", "5432"),
+            "dbname": d.get("dbname", ""),
+            "user": d.get("user", ""),
+            "has_password": bool(d.get("password")),
+            "source": d.get("source", "env"),
+            "is_default": d["alias"] == default,
+        }
+        for d in get_databases()
+    ]
+    iotdb = get_iotdb()
+    return {
+        "databases": dbs,
+        "default": default,
+        "iotdb": {
+            "host": iotdb["host"],
+            "port": iotdb["port"],
+            "user": iotdb["user"],
+            "has_password": bool(iotdb.get("password")),
+        },
+        "log_dirs": get_log_dirs(),
+    }
+
+
+@app.post("/settings/iotdb")
+async def save_iotdb_config(request: Request):
+    """保存 IoTDB 连接参数（密码留空保留原密码）。"""
+    body = await request.json()
+    host = (body.get("host") or "").strip()
+    if not host:
+        return {"ok": False, "error": "主机地址必填"}
+    save_iotdb(
+        {
+            "host": host,
+            "port": body.get("port") or 6667,
+            "user": body.get("user") or "",
+            "password": body.get("password") or "",
+        }
+    )
+    return {"ok": True}
+
+
+@app.post("/settings/iotdb/test")
+async def test_iotdb_config(request: Request):
+    """测试 IoTDB 连接（用请求体里的参数，不落盘）。"""
+    body = await request.json()
+    host = (body.get("host") or "").strip()
+    if not host:
+        return {"ok": False, "error": "主机地址必填"}
+    cfg = {
+        "host": host,
+        "port": body.get("port") or 6667,
+        "user": body.get("user") or "",
+        "password": body.get("password") or "",
+    }
+    ok, msg = await asyncio.to_thread(test_iotdb_connection, cfg)
+    return {"ok": ok, "message": msg}
+
+
+@app.post("/settings/logs")
+async def save_log_dirs_config(request: Request):
+    """保存日志白名单目录（逗号或换行分隔）。"""
+    body = await request.json()
+    dirs = body.get("dirs") or []
+    if isinstance(dirs, str):
+        dirs = [d for d in dirs.replace("\n", ",").split(",") if d.strip()]
+    save_log_dirs([d for d in dirs if d])
+    return {"ok": True}
+
+
+@app.get("/memory/export")
+async def export_memory_file():
+    """把全部会话记忆导出成一个 JSON 知识库文件（下载）。"""
+    data = await mem.export_memory(app.state.checkpointer, str(MEMORY_DB))
+    content = json.dumps(data, ensure_ascii=False, indent=2)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="dataagent-memory.json"'},
+    )
+
+
+@app.post("/memory/import")
+async def import_memory_file(request: Request):
+    """接收 JSON 知识库（body 直接是导出的那份 JSON），写回 checkpointer。
+
+    同名 thread_id 会被覆盖为新版本；新的 thread_id 追加为新会话。
+    """
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "不是合法的 JSON"}
+    if not isinstance(data, dict) or data.get("format") != mem.FORMAT:
+        return {"ok": False, "error": "文件格式不匹配（应为 dataagent-memory 导出文件）"}
+    count = await mem.import_memory(app.state.checkpointer, data)
+    return {"ok": True, "imported_sessions": count}
 
 
 @app.post("/chat")
@@ -210,7 +329,7 @@ async def chat(request: Request):
             raise
         except Exception as e:
             if not stop_event.is_set():
-                yield _sse_event({"type": "error", "content": str(e)})
+                yield _sse_event({"type": "error", "content": format_llm_error(e)})
         finally:
             if stop_event.is_set():
                 # 被「停止」时显式关闭流，让底层图任务取消（例如打断超长 base64 生成）
