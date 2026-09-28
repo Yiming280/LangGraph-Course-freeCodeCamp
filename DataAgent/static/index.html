@@ -552,19 +552,30 @@
             cursor: pointer;
         }
         .db-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .cfg-section-title {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent);
+            margin-top: 16px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border);
+        }
+        .cfg-section-title:first-child { margin-top: 0; }
         .db-form {
-            padding: 14px 18px;
-            border-top: 1px solid var(--border);
             display: flex;
             flex-direction: column;
             gap: 4px;
-            overflow-y: auto;
-            flex-shrink: 0;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.15);
+            margin-top: 8px;
         }
         .db-form h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 4px; }
         .db-form label { font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; }
         .db-form .req { color: var(--accent); }
-        .db-form input {
+        .db-form input,
+        .db-form textarea {
             background: var(--bg);
             color: var(--text);
             border: 1px solid var(--border);
@@ -572,8 +583,15 @@
             padding: 8px 10px;
             font-size: 0.85rem;
             outline: none;
+            font-family: inherit;
         }
-        .db-form input:focus { border-color: var(--accent); }
+        .db-form textarea {
+            resize: vertical;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.8rem;
+        }
+        .db-form input:focus,
+        .db-form textarea:focus { border-color: var(--accent); }
         .db-form-actions { display: flex; gap: 8px; margin-top: 10px; }
         .db-btn {
             flex: 1;
@@ -603,7 +621,8 @@
             </select>
             <input id="apiKey" class="api-key-input" type="password" placeholder="API Key（可选）"
                 title="留空使用服务器默认 Key" autocomplete="off">
-            <button class="new-chat-btn" onclick="openDbModal()">🗄 数据库</button>
+            <button class="new-chat-btn" onclick="openMemModal()">💾 记忆</button>
+            <button class="new-chat-btn" onclick="openDbModal()">⚙️ 连接配置</button>
             <button class="new-chat-btn" onclick="newChat()">＋ 新会话</button>
         </header>
 
@@ -622,39 +641,87 @@
         <img id="lightboxImg" src="" alt="">
     </div>
 
-    <!-- 数据库管理弹窗 -->
+    <!-- 连接配置管理弹窗 -->
     <div class="db-modal" id="dbModal">
         <div class="db-panel">
             <div class="db-header">
-                <h2>数据库管理</h2>
+                <h2>连接配置管理</h2>
                 <button class="db-close" onclick="closeDbModal()">✕</button>
             </div>
             <div class="db-body">
+
+                <div class="cfg-section-title">PostgreSQL 数据库</div>
                 <div id="dbList" class="db-list"></div>
                 <button class="db-add-btn" onclick="openDbForm()">＋ 新增数据库</button>
-            </div>
-            <div class="db-form" id="dbForm" style="display:none">
-                <h3 id="dbFormTitle">新增数据库</h3>
-                <label>别名 <span class="req">*</span></label>
-                <input id="dbAlias" placeholder="如 warehouse（英文/数字/下划线）">
-                <label>用途描述</label>
-                <input id="dbDesc" placeholder="帮助 agent 理解库用途（可选）">
-                <label>主机地址 <span class="req">*</span></label>
-                <input id="dbHost" placeholder="如 10.8.8.233">
-                <label>端口</label>
-                <input id="dbPort" type="number" placeholder="默认 5432">
-                <label>数据库名</label>
-                <input id="dbName" placeholder="如 agile_dispatch">
-                <label>用户名</label>
-                <input id="dbUser" placeholder="如 postgres">
-                <label>密码</label>
-                <input id="dbPassword" type="password" placeholder="编辑时留空则不改密码" autocomplete="new-password">
-                <div class="db-form-actions">
-                    <button class="db-btn db-test" onclick="testDb()">测试连接</button>
-                    <button class="db-btn db-save" onclick="saveDb()">保存</button>
-                    <button class="db-btn db-cancel" onclick="closeDbForm()">取消</button>
+
+                <div class="db-form" id="dbForm" style="display:none">
+                    <h3 id="dbFormTitle">新增数据库</h3>
+                    <label>别名 <span class="req">*</span></label>
+                    <input id="dbAlias" placeholder="如 warehouse（英文/数字/下划线）">
+                    <label>用途描述</label>
+                    <input id="dbDesc" placeholder="帮助 agent 理解库用途（可选）">
+                    <label>主机地址 <span class="req">*</span></label>
+                    <input id="dbHost" placeholder="如 10.8.8.233">
+                    <label>端口</label>
+                    <input id="dbPort" type="number" placeholder="默认 5432">
+                    <label>数据库名</label>
+                    <input id="dbName" placeholder="如 agile_dispatch">
+                    <label>用户名</label>
+                    <input id="dbUser" placeholder="如 postgres">
+                    <label>密码</label>
+                    <input id="dbPassword" type="password" placeholder="编辑时留空则不改密码" autocomplete="new-password">
+                    <div class="db-form-actions">
+                        <button class="db-btn db-test" onclick="testDb()">测试连接</button>
+                        <button class="db-btn db-save" onclick="saveDb()">保存</button>
+                        <button class="db-btn db-cancel" onclick="closeDbForm()">取消</button>
+                    </div>
+                    <div id="dbTestResult" class="db-test-result"></div>
                 </div>
-                <div id="dbTestResult" class="db-test-result"></div>
+
+                <div class="cfg-section-title">IoTDB 时序数据库</div>
+                <div class="db-form" id="iotdbForm">
+                    <label>主机地址 <span class="req">*</span></label>
+                    <input id="iotdbHost" placeholder="如 10.8.22.20">
+                    <label>端口</label>
+                    <input id="iotdbPort" type="number" placeholder="默认 6667">
+                    <label>用户名</label>
+                    <input id="iotdbUser" placeholder="如 root">
+                    <label>密码</label>
+                    <input id="iotdbPassword" type="password" placeholder="留空则保留原密码" autocomplete="new-password">
+                    <div class="db-form-actions">
+                        <button class="db-btn db-test" onclick="testIotdb()">测试连接</button>
+                        <button class="db-btn db-save" onclick="saveIotdb()">保存</button>
+                    </div>
+                    <div id="iotdbTestResult" class="db-test-result"></div>
+                </div>
+
+                <div class="cfg-section-title">本机日志目录</div>
+                <div class="db-form" id="logForm">
+                    <label>允许读取的目录（逗号或换行分隔多个；留空回退到 .env 默认）</label>
+                    <textarea id="logDirs" rows="3" placeholder="/var/log&#10;/data/logs"></textarea>
+                    <div class="db-form-actions">
+                        <button class="db-btn db-save" onclick="saveLogs()">保存</button>
+                    </div>
+                    <div id="logResult" class="db-test-result"></div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- 记忆管理弹窗 -->
+    <div class="db-modal" id="memModal">
+        <div class="db-panel">
+            <div class="db-header">
+                <h2>记忆管理</h2>
+                <button class="db-close" onclick="closeMemModal()">✕</button>
+            </div>
+            <div class="db-body">
+                <div class="db-meta">把各会话的对话记忆打包成知识库 JSON 文件，迁移到别的机器再导入。</div>
+                <button class="db-add-btn" onclick="exportMemory()">⬇ 导出记忆</button>
+                <button class="db-add-btn" onclick="document.getElementById('memFile').click()">⬆ 导入记忆</button>
+                <input type="file" id="memFile" accept="application/json,.json" style="display:none" onchange="importMemory(this)">
+                <div id="memResult" class="db-test-result"></div>
             </div>
         </div>
     </div>
@@ -721,10 +788,13 @@
             localStorage.setItem(APIKEY_KEY, apiKeyEl.value);
         });
 
-        // ============ 数据库管理 ============
+        // ============ 连接配置管理（数据库 / IoTDB / 日志） ============
+        let currentSettings = null;
+
         async function openDbModal() {
             document.getElementById('dbModal').classList.add('show');
-            await refreshDbList();
+            closeDbForm();
+            await loadSettings();
         }
 
         function closeDbModal() {
@@ -732,43 +802,48 @@
             closeDbForm();
         }
 
-        async function refreshDbList() {
+        /** 一次性拉取全部连接配置并渲染三个区块 */
+        async function loadSettings() {
             const listEl = document.getElementById('dbList');
             try {
-                const res = await fetch('/databases');
-                const data = await res.json();
-                const dbs = data.databases || [];
-                if (!dbs.length) {
-                    listEl.innerHTML = '<div class="db-meta" style="text-align:center;padding:10px">尚未配置任何数据库</div>';
-                    return;
-                }
-                listEl.innerHTML = '';
-                dbs.forEach(db => {
-                    const card = document.createElement('div');
-                    card.className = 'db-card';
-                    const badges = [];
-                    if (db.is_default) badges.push('<span class="badge default">默认</span>');
-                    badges.push(db.source === 'env'
-                        ? '<span class="badge env">环境变量</span>'
-                        : '<span class="badge user">网页新增</span>');
-                    const pwd = db.has_password ? '已设置' : '未设置';
-                    const actions = db.source === 'user'
-                        ? `<button onclick="editDb('${escapeAttr(db.alias)}')">编辑</button>
-                           <button class="danger" onclick="deleteDb('${escapeAttr(db.alias)}')">删除</button>`
-                        : '<span class="db-meta">只读</span>';
-                    card.innerHTML = `
-                        <div class="db-info">
-                            <div class="db-alias">${escapeHtml(db.alias)}${badges.join('')}</div>
-                            <div class="db-meta">${escapeHtml(db.description || '—')}</div>
-                            <div class="db-meta">${escapeHtml(db.host)}:${escapeHtml(String(db.port))}/${escapeHtml(db.dbname)} · ${escapeHtml(db.user)} · 密码${pwd}</div>
-                        </div>
-                        <div class="db-actions">${actions}</div>
-                    `;
-                    listEl.appendChild(card);
-                });
+                const res = await fetch('/settings');
+                currentSettings = await res.json();
+                renderDbList(currentSettings.databases || [], currentSettings.default);
+                renderIotdb(currentSettings.iotdb || {});
+                renderLogs(currentSettings.log_dirs || []);
             } catch (e) {
                 listEl.innerHTML = `<div class="db-meta">加载失败: ${escapeHtml(e.message)}</div>`;
             }
+        }
+
+        function renderDbList(dbs) {
+            const listEl = document.getElementById('dbList');
+            if (!dbs.length) {
+                listEl.innerHTML = '<div class="db-meta" style="text-align:center;padding:10px">尚未配置任何数据库</div>';
+                return;
+            }
+            listEl.innerHTML = '';
+            dbs.forEach(db => {
+                const card = document.createElement('div');
+                card.className = 'db-card';
+                const badges = [];
+                if (db.is_default) badges.push('<span class="badge default">默认</span>');
+                badges.push(db.source === 'env'
+                    ? '<span class="badge env">环境变量</span>'
+                    : '<span class="badge user">网页配置</span>');
+                const pwd = db.has_password ? '已设置' : '未设置';
+                const actions = `<button onclick="editDb('${escapeAttr(db.alias)}')">编辑</button>
+                                 <button class="danger" onclick="deleteDb('${escapeAttr(db.alias)}')">删除</button>`;
+                card.innerHTML = `
+                    <div class="db-info">
+                        <div class="db-alias">${escapeHtml(db.alias)}${badges.join('')}</div>
+                        <div class="db-meta">${escapeHtml(db.description || '—')}</div>
+                        <div class="db-meta">${escapeHtml(db.host)}:${escapeHtml(String(db.port))}/${escapeHtml(db.dbname)} · ${escapeHtml(db.user)} · 密码${pwd}</div>
+                    </div>
+                    <div class="db-actions">${actions}</div>
+                `;
+                listEl.appendChild(card);
+            });
         }
 
         function openDbForm() {
@@ -782,15 +857,13 @@
             document.getElementById('dbForm').style.display = 'flex';
         }
 
-        async function editDb(alias) {
+        function editDb(alias) {
             document.getElementById('dbFormTitle').textContent = '编辑 ' + alias;
             document.getElementById('dbTestResult').textContent = '';
             document.getElementById('dbTestResult').className = 'db-test-result';
             document.getElementById('dbForm').style.display = 'flex';
 
-            const res = await fetch('/databases');
-            const data = await res.json();
-            const db = (data.databases || []).find(d => d.alias === alias);
+            const db = (currentSettings?.databases || []).find(d => d.alias === alias);
             if (!db) return;
 
             document.getElementById('dbAlias').value = db.alias;
@@ -857,7 +930,7 @@
                 const data = await res.json();
                 if (data.ok) {
                     closeDbForm();
-                    await refreshDbList();
+                    await loadSettings();
                 } else {
                     resultEl.textContent = data.error || '保存失败';
                     resultEl.className = 'db-test-result err';
@@ -871,11 +944,159 @@
         async function deleteDb(alias) {
             if (!confirm('确定删除数据库「' + alias + '」吗？')) return;
             await fetch('/databases/' + encodeURIComponent(alias), { method: 'DELETE' });
-            await refreshDbList();
+            await loadSettings();
+        }
+
+        // ---- IoTDB 时序库 ----
+        function renderIotdb(iotdb) {
+            document.getElementById('iotdbHost').value = iotdb.host || '';
+            document.getElementById('iotdbPort').value = iotdb.port || 6667;
+            document.getElementById('iotdbUser').value = iotdb.user || '';
+            document.getElementById('iotdbPassword').value = '';
+            document.getElementById('iotdbPassword').placeholder = iotdb.has_password ? '留空则保留原密码' : '';
+            document.getElementById('iotdbTestResult').textContent = '';
+            document.getElementById('iotdbTestResult').className = 'db-test-result';
+        }
+
+        function iotdbValues() {
+            return {
+                host: document.getElementById('iotdbHost').value.trim(),
+                port: document.getElementById('iotdbPort').value.trim() || '6667',
+                user: document.getElementById('iotdbUser').value.trim(),
+                password: document.getElementById('iotdbPassword').value,
+            };
+        }
+
+        async function testIotdb() {
+            const resultEl = document.getElementById('iotdbTestResult');
+            resultEl.textContent = '正在测试连接…';
+            resultEl.className = 'db-test-result';
+            try {
+                const res = await fetch('/settings/iotdb/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(iotdbValues()),
+                });
+                const data = await res.json();
+                resultEl.textContent = data.message || (data.ok ? '连接成功' : '失败');
+                resultEl.className = 'db-test-result ' + (data.ok ? 'ok' : 'err');
+            } catch (e) {
+                resultEl.textContent = '测试请求失败: ' + e.message;
+                resultEl.className = 'db-test-result err';
+            }
+        }
+
+        async function saveIotdb() {
+            const resultEl = document.getElementById('iotdbTestResult');
+            const vals = iotdbValues();
+            if (!vals.host) {
+                resultEl.textContent = '主机地址必填';
+                resultEl.className = 'db-test-result err';
+                return;
+            }
+            try {
+                const res = await fetch('/settings/iotdb', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(vals),
+                });
+                const data = await res.json();
+                resultEl.textContent = data.ok ? '已保存' : (data.error || '保存失败');
+                resultEl.className = 'db-test-result ' + (data.ok ? 'ok' : 'err');
+            } catch (e) {
+                resultEl.textContent = '保存失败: ' + e.message;
+                resultEl.className = 'db-test-result err';
+            }
+        }
+
+        // ---- 本机日志目录 ----
+        function renderLogs(dirs) {
+            document.getElementById('logDirs').value = (dirs || []).join('\n');
+            document.getElementById('logResult').textContent = '';
+            document.getElementById('logResult').className = 'db-test-result';
+        }
+
+        async function saveLogs() {
+            const resultEl = document.getElementById('logResult');
+            const raw = document.getElementById('logDirs').value;
+            const dirs = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+            try {
+                const res = await fetch('/settings/logs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dirs }),
+                });
+                const data = await res.json();
+                resultEl.textContent = data.ok ? '已保存' : (data.error || '保存失败');
+                resultEl.className = 'db-test-result ' + (data.ok ? 'ok' : 'err');
+            } catch (e) {
+                resultEl.textContent = '保存失败: ' + e.message;
+                resultEl.className = 'db-test-result err';
+            }
         }
 
         function escapeAttr(s) {
             return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        }
+
+        // ============ 记忆管理（导出/导入） ============
+        function openMemModal() {
+            document.getElementById('memModal').classList.add('show');
+        }
+
+        function closeMemModal() {
+            document.getElementById('memModal').classList.remove('show');
+        }
+
+        async function exportMemory() {
+            const resultEl = document.getElementById('memResult');
+            resultEl.className = 'db-test-result';
+            resultEl.textContent = '正在导出…';
+            try {
+                const res = await fetch('/memory/export');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'dataagent-memory.json';
+                a.click();
+                URL.revokeObjectURL(url);
+                resultEl.textContent = '已导出 dataagent-memory.json';
+                resultEl.className = 'db-test-result ok';
+            } catch (e) {
+                resultEl.textContent = '导出失败: ' + e.message;
+                resultEl.className = 'db-test-result err';
+            }
+        }
+
+        async function importMemory(input) {
+            const resultEl = document.getElementById('memResult');
+            const file = input.files && input.files[0];
+            if (!file) return;
+            resultEl.className = 'db-test-result';
+            resultEl.textContent = '正在导入 ' + file.name + '…';
+            try {
+                const text = await file.text();
+                const res = await fetch('/memory/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: text,
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    resultEl.textContent = '导入成功，共 ' + data.imported_sessions + ' 个会话';
+                    resultEl.className = 'db-test-result ok';
+                } else {
+                    resultEl.textContent = '导入失败: ' + (data.error || '未知错误');
+                    resultEl.className = 'db-test-result err';
+                }
+            } catch (e) {
+                resultEl.textContent = '导入失败: ' + e.message;
+                resultEl.className = 'db-test-result err';
+            } finally {
+                input.value = ''; // 允许再次选同一个文件
+            }
         }
 
         let isStreaming = false;
