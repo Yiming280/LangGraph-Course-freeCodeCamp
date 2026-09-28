@@ -87,7 +87,7 @@ def query_database(sql: str, db: str = "") -> str:
         rows = cur.fetchall()
         if not rows:
             return "(Query returned 0 rows)"
-        return f"({len(rows)} rows)\n" + str(rows[:50])  # 最多返回 50 行，控制上下文
+        return f"({len(rows)} rows)\n" + str(rows[:10])  # 最多返回 10 行，控制上下文
     except Exception as e:
         return f"Database error: {e}"
     finally:

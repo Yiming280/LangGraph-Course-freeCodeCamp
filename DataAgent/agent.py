@@ -55,6 +55,10 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "qwen3.5:9b")
 
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
 
+# 输出 token 上限。Qwen 思考模式下 reasoning_content 会先占掉大量输出预算，
+# 默认给足空间，避免"思考过长 → 最终回答被截断/为空"。可在 .env 用 MAX_OUTPUT_TOKENS 覆盖。
+MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "8192"))
+
 
 def available_models() -> list[dict]:
     """供前端渲染的可用后端清单（id 用于请求里的 provider 字段）。"""
@@ -74,17 +78,61 @@ def _get_ollama_client():
     if _ollama_client is None:
         import ollama
 
-        _ollama_client = ollama.AsyncClient(host=OLLAMA_HOST)
+        _ollama_client = ollama.AsyncClient(host=OLLAMA_HOST, timeout=60.0)
     return _ollama_client
 
 
 def _get_openai_client(api_key: str | None):
     key = (api_key or "").strip() or OPENAI_API_KEY
     if key not in _openai_clients:
+        import httpx
         from openai import AsyncOpenAI
 
-        _openai_clients[key] = AsyncOpenAI(base_url=OPENAI_BASE_URL, api_key=key)
+        # read=30s：流式时若 30 秒收不到任何字节（服务挂起/后端宕机）就提前失败，
+        # 不等代理 nginx 的 60s 超时；只要 token 持续输出，计时不断重置，长回答不受影响。
+        _openai_clients[key] = AsyncOpenAI(
+            base_url=OPENAI_BASE_URL,
+            api_key=key,
+            timeout=httpx.Timeout(connect=20.0, read=60.0, write=60.0, pool=10.0),
+            max_retries=0,  # 连接失败/超时不再自动重试，避免等待翻倍
+        )
     return _openai_clients[key]
+
+
+def format_llm_error(e: Exception) -> str:
+    """把 LLM 调用异常转成一句人能读懂的短话，剥掉代理返回的 HTML。"""
+    try:
+        from openai import APIConnectionError, APITimeoutError, APIStatusError
+    except ImportError:  # 纯 ollama 环境（没装 openai SDK）时兜底
+        APIConnectionError = APITimeoutError = APIStatusError = ()
+
+    raw = str(e)
+    low = raw.lower()
+
+    # 超时（含代理 HTML 里的 "Gateway Time-out" / "time-out" 等写法）
+    if (
+        isinstance(e, APITimeoutError)
+        or "timed out" in low
+        or "timeout" in low
+        or "time-out" in low
+        or "time out" in low
+    ):
+        return "LLM 服务器响应超时（可能正在冷启动或后端宕机），请稍后重试"
+    if isinstance(e, APIStatusError):
+        code = getattr(e, "status_code", "")
+        return f"LLM 服务器返回错误（HTTP {code}，网关超时或后端异常）"
+    if isinstance(e, APIConnectionError) or "connect" in low or "no route to host" in low:
+        return "无法连接 LLM 服务器（网络不可达或服务未启动）"
+
+    # 兜底：代理可能返回带状态码的 HTML（如 "504 Gateway Time-out"）
+    m = re.search(r"\b(5\d{2})\b", raw)
+    if m:
+        return f"LLM 服务器无响应（HTTP {m.group(1)}，网关超时或后端宕机），请稍后重试"
+
+    # 最后兜底：剥掉 HTML 标签、压成一行、截断，避免把整段 HTML 打给用户
+    plain = re.sub(r"<[^>]+>", " ", raw)
+    plain = re.sub(r"\s+", " ", plain).strip()
+    return plain[:200] or "模型调用失败"
 
 # 工具转换（langchain @tool → OpenAI 函数格式，ollama/openai 通用），模块级只算一次
 OPENAI_TOOLS = [convert_to_openai_tool(t) for t in ALL_TOOLS]
@@ -122,9 +170,17 @@ SYSTEM_PROMPT = """你是 Data Agent，一个能提取数据库数据、做分�
    拓扑只覆盖 HL/WL 车 + ZZT；库里另有 AMR-CS/AX/HP、AGV-CS 等车及 BI/BJ/BK/AQ 等工位不在拓扑内。
 7. list_databases() —— 列出所有可用数据库的别名及用途。当不确定用户提到的库对应哪个别名时调用，
    再用返回的别名传给 query_database / get_current_date 的 db 参数。
-7. create_gantt_chart(tasks, starts, ends, groups, title) —— 生成甘特图（时间区间/排程 PNG）。
+8. create_gantt_chart(tasks, starts, ends, groups, title) —— 生成甘特图（时间区间/排程 PNG）。
    tasks / starts / ends / groups 都是 JSON 数组字符串（groups 可选）。用户要"甘特图/时间轴/
    排程/进度条/占用时间段"时用本工具，不要用 python_executor 画图再输出 base64。
+9. 【IoTDB 时序库】query_iotdb / list_iotdb_databases / list_iotdb_devices / show_iotdb_timeseries
+   —— 只读查询 Apache IoTDB（产线工位状态变换），用法见下方【时序库 + 日志专项指引】。
+   先 list_iotdb_databases() 看库（业务数据在 root.iot），list_iotdb_devices() 摸清设备，
+   show_iotdb_timeseries(path) 看测点结构，再 query_iotdb(sql) 查数据。
+   时间戳单位毫秒；root.iot 数据 TTL=7 天，太老的数据查不到。
+10. 【本机日志】list_log_files / read_log_file / search_logs —— 读本机日志文件。
+    list_log_files(directory) 列文件；read_log_file(path, tail, keyword) 看文件末尾若干行；
+    search_logs(keyword, directory) 在目录内 grep 关键词（返回 文件名:行号: 内容）。
 
 你的工作流程：
 1. 遇到数据问题，先 query_database 探索相关表的结构。
@@ -180,6 +236,21 @@ SYSTEM_PROMPT = """你是 Data Agent，一个能提取数据库数据、做分�
 注意：供料任务靠 device_name + target_device_name 关联，action_type 是泛化文案
 （如【AMR】给【2-1夹区】【精雕】【上下料】）不含工位号，不能用来识别工位。
 
+【时序库 + 日志专项指引（工程师操作复盘 / 沉淀知识）】
+用户让你「复盘工程师如何解决问题」「从状态变化分析操作过程」「结合日志找原因」时：
+1. list_iotdb_devices() + show_iotdb_timeseries(path) 摸清设备/工位与测点含义
+   （State=状态码、AutoMode=自动/手动、Trigger=触发、WorksationAlarm=报警、HeartBeat=心跳等）。
+2. 用 query_iotdb 定位状态变化时间点，例如：
+   SELECT LAST * FROM root.iot.device.<设备ID>.group.*   —— 各工位最新状态
+   SELECT * FROM root.iot.** WHERE time > <毫秒时间戳> AND time < <毫秒时间戳> LIMIT 500
+   找「哪个工位在什么时间状态跳变」：State 变化 / AutoMode true→false 转手动 / 报警位翻转。
+3. 拿到时间点后，用 search_logs(keyword) 或 read_log_file 到本机日志检索对应记录
+   （关键词用设备号、工位、状态、error/warning 等），还原问题现场。
+4. 综合时序状态 + 日志，归纳工程师的操作序列与解决思路，输出结构化知识：
+   问题现象 → 定位依据（时序+日志）→ 处理动作 → 恢复结果，并给出可复用建议。
+注意：时序库没有「工程师操作」的直接字段，操作体现为状态跳变（手动介入/状态变化/报警翻转），
+需据此推断，日志用于佐证。
+
 注意：
 - 若工具返回错误，仔细阅读并修正后重试。
 - 用户提问里提到某个库名/别名时，query_database / get_current_date 用 db 参数指定该别名；
@@ -198,14 +269,60 @@ def build_system_prompt() -> str:
 # ============================================================
 # Agent 状态
 # ============================================================
+# 记忆上限：checkpoint 里最多保留最近这么多条消息，防止 agent_memory.sqlite 无限膨胀。
+MAX_MESSAGES = 30
+
+
+def _capped_messages(
+    existing: Sequence[BaseMessage], new: Sequence[BaseMessage]
+) -> list[BaseMessage]:
+    """add_messages 的封装：合并新消息后只保留最近 MAX_MESSAGES 条。"""
+    merged = add_messages(existing, new)
+    return list(merged[-MAX_MESSAGES:])
+
+
 class AgentState(TypedDict):
-    # add_messages reducer：新消息自动追加到历史（memory 的核心机制）
-    messages: Annotated[Sequence[BaseMessage], add_messages]
+    # _capped_messages：新消息自动追加到历史，同时把历史长度锁在 MAX_MESSAGES 条以内
+    messages: Annotated[Sequence[BaseMessage], _capped_messages]
 
 
 # ============================================================
 # 消息转换（LangChain 消息 ↔ OpenAI/Ollama 兼容格式）
 # ============================================================
+# 发给模型的历史上下文上限（字符数）。长会话会把几百 KB 的历史一起发给模型，
+# 导致 prefill 超慢甚至超时；这里只保留 system 提示 + 最近一段历史。
+MAX_HISTORY_CHARS = 40000
+
+
+def _trim_history(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
+    """裁剪消息历史，避免上下文无限膨胀。
+
+    保留：开头的 system 消息 + 从后往前最近的一段（总字符数不超过 MAX_HISTORY_CHARS）。
+    丢弃开头孤立的 ToolMessage（它对应的 tool_call 已被裁掉，会破坏结构）。
+    """
+    sys_msgs = [m for m in messages if isinstance(m, SystemMessage)]
+    # 只保留第一条 system 消息：app.py 每轮都会重复注入相同的 system prompt，
+    # 不裁的话它会逐轮累积（这里的历史 159 条里就堆了几十份 system prompt）。
+    sys_msgs = sys_msgs[:1]
+    rest = [m for m in messages if not isinstance(m, SystemMessage)]
+
+    kept: list[BaseMessage] = []
+    total = 0
+    for m in reversed(rest):
+        size = len(str(m.content)) + 200  # +200 覆盖 tool_calls 等结构开销
+        if kept and total + size > MAX_HISTORY_CHARS:
+            break
+        kept.append(m)
+        total += size
+    kept.reverse()
+
+    # 开头若是孤立的 ToolMessage（其 AIMessage 的 tool_call 被裁掉了），丢弃
+    while kept and isinstance(kept[0], ToolMessage):
+        kept.pop(0)
+
+    return [*sys_msgs, *kept]
+
+
 def convert_messages(messages: Sequence[BaseMessage], provider: str) -> list[dict]:
     """把 LangChain 消息转成 OpenAI/Ollama 兼容的 dict 格式。"""
     out: list[dict] = []
@@ -252,13 +369,14 @@ async def _stream_ollama(client, model, messages: list[dict], writer):
     thinking = ""
     content = ""
     raw_tool_calls = None
+    done_reason = ""
 
     async for part in await client.chat(
         model=model,
         messages=messages,
         tools=OPENAI_TOOLS,
         stream=True,
-        options={"temperature": TEMPERATURE},
+        options={"temperature": TEMPERATURE, "num_predict": MAX_OUTPUT_TOKENS},
     ):
         m = part.message
         th = getattr(m, "thinking", "") or ""
@@ -273,6 +391,7 @@ async def _stream_ollama(client, model, messages: list[dict], writer):
         if m.tool_calls:
             raw_tool_calls = m.tool_calls
         if part.done:
+            done_reason = getattr(part, "done_reason", "") or ""
             break
 
     # Ollama 的 tool_call 没有 id，用 uuid 生成（langchain 的 ToolMessage 需要）
@@ -287,7 +406,7 @@ async def _stream_ollama(client, model, messages: list[dict], writer):
                     "type": "tool_call",
                 }
             )
-    return thinking, content, tool_calls
+    return thinking, content, tool_calls, done_reason
 
 
 async def _stream_openai(client, model, messages: list[dict], writer):
@@ -362,7 +481,7 @@ async def model_call(state: AgentState, config) -> AgentState:
     provider = (cfg.get("provider") or "").strip().lower() or DEFAULT_PROVIDER
     api_key = (cfg.get("api_key") or "").strip() or None
 
-    messages = convert_messages(state["messages"], provider)
+    messages = convert_messages(_trim_history(state["messages"]), provider)
 
     try:
         if provider == "openai":
@@ -372,8 +491,9 @@ async def model_call(state: AgentState, config) -> AgentState:
             client = _get_ollama_client()
             thinking, content, tool_calls = await _stream_ollama(client, OLLAMA_MODEL, messages, writer)
     except Exception as e:
-        writer({"type": "error", "content": f"模型调用失败: {e}"})
-        raise
+        # 只在这里报一次错（不再 raise，避免 app.py 里又报一遍重复的原始 HTML）
+        writer({"type": "error", "content": f"模型调用失败：{format_llm_error(e)}"})
+        return {"messages": []}
 
     ai_msg = AIMessage(
         content=content,
@@ -383,10 +503,28 @@ async def model_call(state: AgentState, config) -> AgentState:
     return {"messages": [ai_msg]}
 
 
+# 单轮对话最多执行「工具」节点的次数，防止模型反复调用失败工具陷入死循环。
+# 每轮用户提问自动重置（按最近一条 HumanMessage 起算），可用环境变量覆盖。
+MAX_TOOL_ROUNDS = int(os.getenv("MAX_TOOL_ROUNDS", "10"))
+
+
+def _current_tool_rounds(messages: Sequence[BaseMessage]) -> int:
+    """统计自最近一条 HumanMessage（本轮提问）以来，模型已发起的工具调用轮数。"""
+    rounds = 0
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage):
+            break
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+            rounds += 1
+    return rounds
+
+
 def should_continue(state: AgentState) -> str:
-    """路由：模型要调工具则去 tools 节点，否则结束。"""
+    """路由：模型要调工具则去 tools 节点，否则结束；达到循环上限则强制结束。"""
     last = state["messages"][-1]
     if isinstance(last, AIMessage) and getattr(last, "tool_calls", None):
+        if _current_tool_rounds(state["messages"]) >= MAX_TOOL_ROUNDS:
+            return "end"
         return "tools"
     return "end"
 
