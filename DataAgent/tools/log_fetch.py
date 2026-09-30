@@ -16,7 +16,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 
-from tools._settings import get_log_dirs
+from tools._settings import get_log_dirs, get_log_sources
 
 load_dotenv()
 
@@ -25,19 +25,19 @@ _MAX_MATCHES = 500    # search_logs 最多返回匹配条数
 _MAX_TAIL = 5000      # read_log_file 最大 tail 行数
 
 
-def _log_dirs() -> list[Path]:
-    """日志白名单目录列表（settings.json 覆盖 env，兜底 /var/log）。"""
-    dirs = [Path(item).expanduser() for item in get_log_dirs() if item.strip()]
+def _log_dirs(alias: str = "") -> list[Path]:
+    """日志白名单目录列表（按来源别名；settings.json 覆盖 env，兜底 /var/log）。"""
+    dirs = [Path(item).expanduser() for item in get_log_dirs(alias) if item.strip()]
     return dirs or [Path("/var/log")]
 
 
-def _resolve(path: str) -> Path | None:
+def _resolve(path: str, alias: str = "") -> Path | None:
     """把用户给的路径解析为绝对路径，并校验落在白名单目录内；越界返回 None。"""
     p = Path(path).expanduser()
     if not p.is_absolute():
-        p = _log_dirs()[0] / p
+        p = _log_dirs(alias)[0] / p
     p = p.resolve()
-    for d in _log_dirs():
+    for d in _log_dirs(alias):
         dr = d.resolve()
         try:
             p.relative_to(dr)
@@ -90,14 +90,32 @@ def _clamp(text: str) -> str:
     return text[:_MAX_OUTPUT] + "\n…(输出过长，已截断)"
 
 
-@tool
-def list_log_files(directory: str = "") -> str:
+@tool(parse_docstring=True)
+def list_log_sources() -> str:
+    """列出所有已配置的日志来源（别名 + 目录），用于选择检索哪套日志。
+
+    不确定有哪些日志目录、或用户提到某套日志时，先调用本工具拿到别名，
+    再把别名传给 list_log_files / read_log_file / search_logs 的 alias 参数。
+    """
+    sources = get_log_sources()
+    if not sources:
+        return "未配置任何日志来源。"
+    lines = []
+    for i, s in enumerate(sources):
+        tag = "（默认）" if i == 0 else ""
+        lines.append(f"- {s['alias']}{tag} —— {', '.join(s['dirs']) or '(无目录)'}")
+    return "\n".join(lines)
+
+
+@tool(parse_docstring=True)
+def list_log_files(directory: str = "", alias: str = "") -> str:
     """列出日志目录下的文件（含大小和修改时间）。
 
     Args:
         directory: 可选，日志子目录（相对 LOG_DIR 或绝对路径）；不传则用默认日志根目录。
+        alias: 可选，日志来源别名（见 list_log_sources）；不传用默认（第一个）。
     """
-    base = _resolve(directory) if directory else _log_dirs()[0].resolve()
+    base = _resolve(directory, alias) if directory else _log_dirs(alias)[0].resolve()
     if base is None:
         return f"路径 {directory!r} 不在允许的日志目录内。"
     if not base.exists() or not base.is_dir():
@@ -117,8 +135,8 @@ def list_log_files(directory: str = "") -> str:
     return _clamp("\n".join(lines))
 
 
-@tool
-def read_log_file(path: str, tail: int = 200, keyword: str = "") -> str:
+@tool(parse_docstring=True)
+def read_log_file(path: str, tail: int = 200, keyword: str = "", alias: str = "") -> str:
     """读取指定日志文件末尾若干行（可选按关键词过滤）。
 
     Args:
@@ -126,8 +144,9 @@ def read_log_file(path: str, tail: int = 200, keyword: str = "") -> str:
         tail: 返回末尾多少行（默认 200，最大 5000）。
         keyword: 可选，只返回包含该关键词的行（大小写不敏感）；过滤在 tail 窗口内进行，
             若要在整个目录内检索请用 search_logs。
+        alias: 可选，日志来源别名（见 list_log_sources）；不传用默认（第一个）。
     """
-    p = _resolve(path)
+    p = _resolve(path, alias)
     if p is None:
         return f"路径 {path!r} 不在允许的日志目录内。"
     if not p.exists() or not p.is_file():
@@ -151,8 +170,8 @@ def read_log_file(path: str, tail: int = 200, keyword: str = "") -> str:
     return _clamp("\n".join(lines))
 
 
-@tool
-def search_logs(keyword: str, directory: str = "", tail: int = 200) -> str:
+@tool(parse_docstring=True)
+def search_logs(keyword: str, directory: str = "", tail: int = 200, alias: str = "") -> str:
     """在日志目录内检索包含关键词的行（返回 文件名:行号: 内容）。
 
     配合 IoTDB 工具：先拿到状态变化的时间点/关键词，再到日志里定位对应记录。
@@ -161,12 +180,13 @@ def search_logs(keyword: str, directory: str = "", tail: int = 200) -> str:
         keyword: 必填，检索关键词（大小写不敏感）。
         directory: 可选，限定搜索的日志子目录；不传则递归搜索默认日志根目录。
         tail: 每个文件最多返回多少条匹配（默认 200）。
+        alias: 可选，日志来源别名（见 list_log_sources）；不传用默认（第一个）。
     """
     kw = (keyword or "").strip()
     if not kw:
         return "请提供 keyword 检索关键词。"
     kw = kw.lower()
-    base = _resolve(directory) if directory else _log_dirs()[0].resolve()
+    base = _resolve(directory, alias) if directory else _log_dirs(alias)[0].resolve()
     if base is None:
         return f"目录 {directory!r} 不在允许的日志目录内。"
     if not base.exists() or not base.is_dir():

@@ -21,7 +21,7 @@ from langchain_core.tools import tool
 
 from iotdb.Session import Session
 
-from tools._settings import get_iotdb
+from tools._settings import get_iotdb, get_iotdbs
 
 load_dotenv()
 
@@ -71,9 +71,11 @@ def test_iotdb_connection(cfg: dict) -> tuple[bool, str]:
             pass
 
 
-def _query(sql: str) -> str:
+def _query(sql: str, alias: str = "") -> str:
     """执行一条只读语句，返回格式化字符串；失败返回错误字符串（不抛异常）。"""
-    cfg = get_iotdb()
+    cfg = get_iotdb(alias)
+    if cfg is None:
+        return f"IoTDB error: 未知连接别名 {alias!r}（可用连接见 list_iotdb_sources）"
     session = Session(cfg["host"], cfg["port"], cfg["user"], cfg["password"])
     try:
         session.open(enable_rpc_compression=False)
@@ -133,17 +135,36 @@ def _format(df) -> str:
 
 
 @tool
-def query_iotdb(sql: str = "") -> str:
+def list_iotdb_sources() -> str:
+    """列出所有已配置的 IoTDB 连接（别名 + 主机），用于选择用哪个时序库。
+
+    不确定有哪些 IoTDB 连接、或用户提到某个具体时序库时，先调用本工具拿到别名，
+    再把别名传给 query_iotdb / list_iotdb_devices / show_iotdb_timeseries 的 alias 参数。
+    """
+    iotdbs = get_iotdbs()
+    if not iotdbs:
+        return "未配置任何 IoTDB 连接。"
+    lines = []
+    for d in iotdbs:
+        tag = "（默认）" if iotdbs.index(d) == 0 else ""
+        lines.append(f"- {d['alias']}{tag} —— {d['host']}:{d['port']} / {d['user']}")
+    return "\n".join(lines)
+
+
+@tool
+def query_iotdb(sql: str = "", alias: str = "") -> str:
     """执行 Apache IoTDB 只读查询（SELECT / SHOW / COUNT / DESCRIBE / LIST）。
 
-    先 list_iotdb_databases / list_iotdb_devices / show_iotdb_timeseries 摸清结构，
-    再用本工具查数据。时间戳单位毫秒；root.iot 数据 TTL=7 天，太老的数据查不到。
+    先 list_iotdb_sources 看有哪些连接，再 list_iotdb_databases / list_iotdb_devices /
+    show_iotdb_timeseries 摸清结构，再用本工具查数据。
+    时间戳单位毫秒；root.iot 数据 TTL=7 天，太老的数据查不到。
 
     Args:
         sql: IoTDB 原生 SQL（只读）。常用：
              - 看某工位最新状态：SELECT LAST * FROM root.iot.device.<设备ID>.group.*
              - 查某测点近期时序：SELECT * FROM root.iot.** WHERE time > <毫秒时间戳> LIMIT 100
              数据量大务必加 LIMIT，避免结果过大。
+        alias: 可选，IoTDB 连接别名（见 list_iotdb_sources）；不传用默认（第一个）。
     """
     sql = (sql or "").strip()
     if not sql:
@@ -154,16 +175,19 @@ def query_iotdb(sql: str = "") -> str:
         )
     if not _READONLY_RE.match(sql):
         return "IoTDB error: 只读工具，仅允许 SELECT / SHOW / COUNT / DESCRIBE / LIST 查询，不接受写操作。"
-    return _query(sql)
+    return _query(sql, alias)
 
 
 @tool
-def list_iotdb_databases() -> str:
-    """列出 IoTDB 所有 database（库）。
+def list_iotdb_databases(alias: str = "") -> str:
+    """列出指定 IoTDB 连接的所有 database（库）。
 
     业务数据在 root.iot；root.__audit 是密码历史，与业务无关。
+
+    Args:
+        alias: 可选，IoTDB 连接别名；不传用默认（第一个）。
     """
-    return _query("SHOW DATABASES")
+    return _query("SHOW DATABASES", alias)
 
 
 def _with_wildcard(p: str) -> str:
@@ -172,22 +196,24 @@ def _with_wildcard(p: str) -> str:
 
 
 @tool
-def list_iotdb_devices(path: str = "") -> str:
-    """列出 IoTDB 设备（device）清单，用于摸清有哪些工位/设备。
+def list_iotdb_devices(path: str = "", alias: str = "") -> str:
+    """列出指定 IoTDB 连接的设备（device）清单，用于摸清有哪些工位/设备。
 
     Args:
         path: 可选，指定前缀路径（如 root.iot 或某 device 路径）；不传则列全部设备。
+        alias: 可选，IoTDB 连接别名；不传用默认（第一个）。
     """
     p = _with_wildcard((path or "").strip())
-    return _query(f"SHOW DEVICES {p or 'root.**'}")
+    return _query(f"SHOW DEVICES {p or 'root.**'}", alias)
 
 
 @tool
-def show_iotdb_timeseries(path: str = "") -> str:
-    """查看 timeseries（测点）结构：路径、数据类型等。
+def show_iotdb_timeseries(path: str = "", alias: str = "") -> str:
+    """查看指定 IoTDB 连接的 timeseries（测点）结构：路径、数据类型等。
 
     Args:
         path: 可选，指定前缀（如 root.iot 或某 device/group 路径）；不传则列全部。
+        alias: 可选，IoTDB 连接别名；不传用默认（第一个）。
     """
     p = _with_wildcard((path or "").strip())
-    return _query(f"SHOW TIMESERIES {p or 'root.**'}")
+    return _query(f"SHOW TIMESERIES {p or 'root.**'}", alias)
