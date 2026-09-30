@@ -552,6 +552,34 @@
             cursor: pointer;
         }
         .db-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .add-menu {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg);
+            padding: 8px;
+        }
+        .add-menu-item {
+            background: var(--surface2);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            text-align: left;
+        }
+        .add-menu-item:hover { border-color: var(--accent); color: var(--accent); }
+        .type-label {
+            background: var(--bg);
+            color: var(--text-dim);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 0.85rem;
+        }
         .cfg-section-title {
             font-size: 0.8rem;
             font-weight: 600;
@@ -564,18 +592,40 @@
         .db-form {
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 10px;
             border: 1px solid var(--border);
             border-radius: 10px;
             padding: 12px;
             background: rgba(0, 0, 0, 0.15);
-            margin-top: 8px;
         }
-        .db-form h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 4px; }
-        .db-form label { font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; }
+        .db-form h3 { font-size: 0.95rem; font-weight: 600; margin: 0; }
+        .db-form label { font-size: 0.72rem; color: var(--text-dim); }
         .db-form .req { color: var(--accent); }
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 12px;
+        }
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+        .field-full { grid-column: 1 / -1; }
+        .show-pwd {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            cursor: pointer;
+            margin-top: 2px;
+        }
+        .show-pwd input { cursor: pointer; }
         .db-form input,
-        .db-form textarea {
+        .db-form textarea,
+        .db-form select {
             background: var(--bg);
             color: var(--text);
             border: 1px solid var(--border);
@@ -585,13 +635,15 @@
             outline: none;
             font-family: inherit;
         }
+        .db-form select:disabled { opacity: 0.6; cursor: not-allowed; }
         .db-form textarea {
             resize: vertical;
             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             font-size: 0.8rem;
         }
         .db-form input:focus,
-        .db-form textarea:focus { border-color: var(--accent); }
+        .db-form textarea:focus,
+        .db-form select:focus { border-color: var(--accent); }
         .db-form-actions { display: flex; gap: 8px; margin-top: 10px; }
         .db-btn {
             flex: 1;
@@ -650,60 +702,82 @@
             </div>
             <div class="db-body">
 
-                <div class="cfg-section-title">PostgreSQL 数据库</div>
-                <div id="dbList" class="db-list"></div>
-                <button class="db-add-btn" onclick="openDbForm()">＋ 新增数据库</button>
+                <button class="db-add-btn" id="addDbBtn" onclick="toggleAddMenu()">＋ 新增数据库</button>
+                <div class="add-menu" id="addMenu" style="display:none">
+                    <button class="add-menu-item" onclick="openNewForm('postgres')">PostgreSQL</button>
+                    <button class="add-menu-item" onclick="openNewForm('iotdb')">IoTDB 时序数据库</button>
+                    <button class="add-menu-item" onclick="openNewForm('logs')">日志目录</button>
+                </div>
 
                 <div class="db-form" id="dbForm" style="display:none">
                     <h3 id="dbFormTitle">新增数据库</h3>
-                    <label>别名 <span class="req">*</span></label>
-                    <input id="dbAlias" placeholder="如 warehouse（英文/数字/下划线）">
-                    <label>用途描述</label>
-                    <input id="dbDesc" placeholder="帮助 agent 理解库用途（可选）">
-                    <label>主机地址 <span class="req">*</span></label>
-                    <input id="dbHost" placeholder="如 10.8.8.233">
-                    <label>端口</label>
-                    <input id="dbPort" type="number" placeholder="默认 5432">
-                    <label>数据库名</label>
-                    <input id="dbName" placeholder="如 agile_dispatch">
-                    <label>用户名</label>
-                    <input id="dbUser" placeholder="如 postgres">
-                    <label>密码</label>
-                    <input id="dbPassword" type="password" placeholder="编辑时留空则不改密码" autocomplete="new-password">
+
+                    <div class="field">
+                        <label>数据库类型</label>
+                        <div id="dbTypeLabel" class="type-label">—</div>
+                    </div>
+
+                    <div id="aliasFields" class="form-grid">
+                        <div class="field">
+                            <label>别名 / 名称 <span class="req">*</span></label>
+                            <input id="dbAlias" placeholder="如 warehouse / iotdb-主库 / app-logs（英文/数字/下划线/中划线）">
+                        </div>
+                    </div>
+
+                    <div id="pgFields" class="form-grid">
+                        <div class="field">
+                            <label>用途描述</label>
+                            <input id="dbDesc" placeholder="帮助 agent 理解库用途（可选）">
+                        </div>
+                        <div class="field">
+                            <label>数据库名</label>
+                            <input id="dbName" placeholder="如 agile_dispatch">
+                        </div>
+                    </div>
+
+                    <div id="connFields" class="form-grid">
+                        <div class="field">
+                            <label>主机地址 <span class="req">*</span></label>
+                            <input id="dbHost" placeholder="如 10.8.8.233">
+                        </div>
+                        <div class="field">
+                            <label>端口</label>
+                            <input id="dbPort" type="number" placeholder="默认 5432">
+                        </div>
+                        <div class="field">
+                            <label>用户名</label>
+                            <input id="dbUser" placeholder="如 postgres">
+                        </div>
+                        <div class="field">
+                            <label>密码</label>
+                            <input id="dbPassword" type="password" placeholder="留空则保留原密码" autocomplete="new-password">
+                            <label class="show-pwd"><input type="checkbox" id="showPwd" onchange="togglePwd()"> 显示密码</label>
+                        </div>
+                    </div>
+
+                    <div id="logsFields">
+                        <div class="field">
+                            <label>允许读取的目录（逗号或换行分隔多个；留空回退到 .env 默认）</label>
+                            <textarea id="logDirs" rows="3" placeholder="/var/log&#10;/data/logs"></textarea>
+                        </div>
+                    </div>
+
                     <div class="db-form-actions">
-                        <button class="db-btn db-test" onclick="testDb()">测试连接</button>
-                        <button class="db-btn db-save" onclick="saveDb()">保存</button>
-                        <button class="db-btn db-cancel" onclick="closeDbForm()">取消</button>
+                        <button class="db-btn db-test" id="dbTestBtn" onclick="testCurrent()">测试连接</button>
+                        <button class="db-btn db-save" onclick="saveCurrent()">保存</button>
+                        <button class="db-btn db-cancel" onclick="cancelCurrent()">取消</button>
                     </div>
                     <div id="dbTestResult" class="db-test-result"></div>
                 </div>
 
+                <div class="cfg-section-title">PostgreSQL 数据库</div>
+                <div id="dbList" class="db-list"></div>
+
                 <div class="cfg-section-title">IoTDB 时序数据库</div>
-                <div class="db-form" id="iotdbForm">
-                    <label>主机地址 <span class="req">*</span></label>
-                    <input id="iotdbHost" placeholder="如 10.8.22.20">
-                    <label>端口</label>
-                    <input id="iotdbPort" type="number" placeholder="默认 6667">
-                    <label>用户名</label>
-                    <input id="iotdbUser" placeholder="如 root">
-                    <label>密码</label>
-                    <input id="iotdbPassword" type="password" placeholder="留空则保留原密码" autocomplete="new-password">
-                    <div class="db-form-actions">
-                        <button class="db-btn db-test" onclick="testIotdb()">测试连接</button>
-                        <button class="db-btn db-save" onclick="saveIotdb()">保存</button>
-                    </div>
-                    <div id="iotdbTestResult" class="db-test-result"></div>
-                </div>
+                <div id="iotdbList" class="db-list"></div>
 
                 <div class="cfg-section-title">本机日志目录</div>
-                <div class="db-form" id="logForm">
-                    <label>允许读取的目录（逗号或换行分隔多个；留空回退到 .env 默认）</label>
-                    <textarea id="logDirs" rows="3" placeholder="/var/log&#10;/data/logs"></textarea>
-                    <div class="db-form-actions">
-                        <button class="db-btn db-save" onclick="saveLogs()">保存</button>
-                    </div>
-                    <div id="logResult" class="db-test-result"></div>
-                </div>
+                <div id="logList" class="db-list"></div>
 
             </div>
         </div>
@@ -717,7 +791,7 @@
                 <button class="db-close" onclick="closeMemModal()">✕</button>
             </div>
             <div class="db-body">
-                <div class="db-meta">把各会话的对话记忆打包成知识库 JSON 文件，迁移到别的机器再导入。</div>
+                <div class="db-meta">把对话记忆打包成知识库 JSON 文件，迁移到别的机器。</div>
                 <button class="db-add-btn" onclick="exportMemory()">⬇ 导出记忆</button>
                 <button class="db-add-btn" onclick="document.getElementById('memFile').click()">⬆ 导入记忆</button>
                 <input type="file" id="memFile" accept="application/json,.json" style="display:none" onchange="importMemory(this)">
@@ -790,16 +864,19 @@
 
         // ============ 连接配置管理（数据库 / IoTDB / 日志） ============
         let currentSettings = null;
+        let editingOriginalAlias = null; // PostgreSQL 编辑时记录旧别名（改名用）
+        let currentFormType = 'postgres'; // 当前表单类型：postgres | iotdb | logs
+
 
         async function openDbModal() {
             document.getElementById('dbModal').classList.add('show');
-            closeDbForm();
+            cancelCurrent();
             await loadSettings();
         }
 
         function closeDbModal() {
             document.getElementById('dbModal').classList.remove('show');
-            closeDbForm();
+            cancelCurrent();
         }
 
         /** 一次性拉取全部连接配置并渲染三个区块 */
@@ -808,16 +885,22 @@
             try {
                 const res = await fetch('/settings');
                 currentSettings = await res.json();
-                renderDbList(currentSettings.databases || [], currentSettings.default);
-                renderIotdb(currentSettings.iotdb || {});
-                renderLogs(currentSettings.log_dirs || []);
+                renderDbList(currentSettings.databases || []);
+                renderIotdb(currentSettings.iotdbs || []);
+                renderLogs(currentSettings.log_sources || []);
             } catch (e) {
                 listEl.innerHTML = `<div class="db-meta">加载失败: ${escapeHtml(e.message)}</div>`;
             }
         }
 
+        // ---- 卡片渲染（摘要 + 编辑/删除按钮） ----
         function renderDbList(dbs) {
             const listEl = document.getElementById('dbList');
+            // 表单若还插在列表里（编辑中未取消），先挪回安全位置，避免被 innerHTML 清掉
+            const form = document.getElementById('dbForm');
+            if (form && form.parentElement === listEl) {
+                document.getElementById('addDbBtn').after(form);
+            }
             if (!dbs.length) {
                 listEl.innerHTML = '<div class="db-meta" style="text-align:center;padding:10px">尚未配置任何数据库</div>';
                 return;
@@ -826,17 +909,12 @@
             dbs.forEach(db => {
                 const card = document.createElement('div');
                 card.className = 'db-card';
-                const badges = [];
-                if (db.is_default) badges.push('<span class="badge default">默认</span>');
-                badges.push(db.source === 'env'
-                    ? '<span class="badge env">环境变量</span>'
-                    : '<span class="badge user">网页配置</span>');
                 const pwd = db.has_password ? '已设置' : '未设置';
-                const actions = `<button onclick="editDb('${escapeAttr(db.alias)}')">编辑</button>
+                const actions = `<button onclick="editPostgres('${escapeAttr(db.alias)}', this)">编辑</button>
                                  <button class="danger" onclick="deleteDb('${escapeAttr(db.alias)}')">删除</button>`;
                 card.innerHTML = `
                     <div class="db-info">
-                        <div class="db-alias">${escapeHtml(db.alias)}${badges.join('')}</div>
+                        <div class="db-alias">${escapeHtml(db.alias)}</div>
                         <div class="db-meta">${escapeHtml(db.description || '—')}</div>
                         <div class="db-meta">${escapeHtml(db.host)}:${escapeHtml(String(db.port))}/${escapeHtml(db.dbname)} · ${escapeHtml(db.user)} · 密码${pwd}</div>
                     </div>
@@ -846,63 +924,211 @@
             });
         }
 
-        function openDbForm() {
-            document.getElementById('dbFormTitle').textContent = '新增数据库';
-            ['dbAlias', 'dbDesc', 'dbHost', 'dbPort', 'dbName', 'dbUser', 'dbPassword'].forEach(id =>
+        function renderIotdb(iotdbs) {
+            const listEl = document.getElementById('iotdbList');
+            if (!iotdbs || !iotdbs.length) {
+                listEl.innerHTML = '<div class="db-meta" style="text-align:center;padding:10px">尚未配置 IoTDB 连接</div>';
+                return;
+            }
+            listEl.innerHTML = '';
+            iotdbs.forEach((db) => {
+                const card = document.createElement('div');
+                card.className = 'db-card';
+                const pwd = db.has_password ? '已设置' : '未设置';
+                card.innerHTML = `
+                    <div class="db-info">
+                        <div class="db-alias">${escapeHtml(db.alias)}</div>
+                        <div class="db-meta">${escapeHtml(db.host)}:${escapeHtml(String(db.port))} · ${escapeHtml(db.user)} · 密码${pwd}</div>
+                    </div>
+                    <div class="db-actions">
+                        <button onclick="editIotdb('${escapeAttr(db.alias)}', this)">编辑</button>
+                        <button class="danger" onclick="deleteIotdb('${escapeAttr(db.alias)}')">删除</button>
+                    </div>
+                `;
+                listEl.appendChild(card);
+            });
+        }
+
+        function renderLogs(sources) {
+            const listEl = document.getElementById('logList');
+            if (!sources || !sources.length) {
+                listEl.innerHTML = '<div class="db-meta" style="text-align:center;padding:10px">尚未配置日志来源</div>';
+                return;
+            }
+            listEl.innerHTML = '';
+            sources.forEach((s) => {
+                const card = document.createElement('div');
+                card.className = 'db-card';
+                const dirsText = (s.dirs && s.dirs.length) ? s.dirs.join('、') : '（无目录）';
+                card.innerHTML = `
+                    <div class="db-info">
+                        <div class="db-alias">${escapeHtml(s.alias)}</div>
+                        <div class="db-meta">${escapeHtml(dirsText)}</div>
+                    </div>
+                    <div class="db-actions">
+                        <button onclick="editLogs('${escapeAttr(s.alias)}', this)">编辑</button>
+                        <button class="danger" onclick="deleteLogs('${escapeAttr(s.alias)}')">删除</button>
+                    </div>
+                `;
+                listEl.appendChild(card);
+            });
+        }
+
+        // ---- 统一表单（类型下拉切换字段） ----
+        function resetForm() {
+            ['dbAlias', 'dbDesc', 'dbName', 'dbHost', 'dbPort', 'dbUser', 'dbPassword', 'logDirs'].forEach(id =>
                 document.getElementById(id).value = '');
-            document.getElementById('dbAlias').disabled = false;
-            document.getElementById('dbPassword').placeholder = '';
+            document.getElementById('dbPassword').placeholder = '留空则保留原密码';
+            document.getElementById('dbPassword').type = 'password';
+            const showPwd = document.getElementById('showPwd');
+            if (showPwd) showPwd.checked = false;
+            editingOriginalAlias = null;
             document.getElementById('dbTestResult').textContent = '';
             document.getElementById('dbTestResult').className = 'db-test-result';
+        }
+
+        function applyType(type) {
+            document.getElementById('aliasFields').style.display = '';
+            document.getElementById('pgFields').style.display = (type === 'postgres') ? '' : 'none';
+            document.getElementById('connFields').style.display = (type === 'postgres' || type === 'iotdb') ? '' : 'none';
+            document.getElementById('logsFields').style.display = (type === 'logs') ? '' : 'none';
+            document.getElementById('dbTestBtn').style.display = (type === 'logs') ? 'none' : '';
+            document.getElementById('dbPort').placeholder = (type === 'iotdb') ? '默认 6667' : '默认 5432';
+            document.getElementById('dbAlias').placeholder = (type === 'postgres')
+                ? '如 warehouse（英文/数字/下划线）'
+                : (type === 'iotdb' ? '如 iotdb-主库' : '如 app-logs');
+        }
+
+        function typeLabel(type) {
+            return type === 'postgres' ? 'PostgreSQL'
+                 : type === 'iotdb' ? 'IoTDB 时序数据库'
+                 : '日志目录';
+        }
+
+        function toggleAddMenu() {
+            const menu = document.getElementById('addMenu');
+            menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
+        }
+
+        /** 把表单移动到 anchor 之后并展开（原地展开） */
+        function showFormAfter(anchor) {
+            anchor.after(document.getElementById('dbForm'));
             document.getElementById('dbForm').style.display = 'flex';
         }
 
-        function editDb(alias) {
-            document.getElementById('dbFormTitle').textContent = '编辑 ' + alias;
-            document.getElementById('dbTestResult').textContent = '';
-            document.getElementById('dbTestResult').className = 'db-test-result';
-            document.getElementById('dbForm').style.display = 'flex';
+        function openNewForm(type) {
+            currentFormType = type;
+            document.getElementById('dbFormTitle').textContent = '新增 ' + typeLabel(type);
+            document.getElementById('dbTypeLabel').textContent = typeLabel(type);
+            resetForm();
+            applyType(type);
+            document.getElementById('addMenu').style.display = 'none';
+            showFormAfter(document.getElementById('addDbBtn'));
+        }
 
+        function editPostgres(alias, btn) {
             const db = (currentSettings?.databases || []).find(d => d.alias === alias);
             if (!db) return;
 
+            currentFormType = 'postgres';
+            document.getElementById('dbFormTitle').textContent = '编辑 ' + alias;
+            document.getElementById('dbTypeLabel').textContent = 'PostgreSQL';
+            resetForm();
+            editingOriginalAlias = alias;
             document.getElementById('dbAlias').value = db.alias;
-            document.getElementById('dbAlias').disabled = true; // 别名不可改
             document.getElementById('dbDesc').value = db.description || '';
+            document.getElementById('dbName').value = db.dbname || '';
             document.getElementById('dbHost').value = db.host || '';
             document.getElementById('dbPort').value = db.port || '';
-            document.getElementById('dbName').value = db.dbname || '';
             document.getElementById('dbUser').value = db.user || '';
-            document.getElementById('dbPassword').value = '';
             document.getElementById('dbPassword').placeholder = db.has_password ? '留空则保留原密码' : '';
+            applyType('postgres');
+            showFormAfter(btn.closest('.db-card'));
         }
 
-        function closeDbForm() {
-            document.getElementById('dbForm').style.display = 'none';
-            document.getElementById('dbAlias').disabled = false;
+        function editIotdb(alias, btn) {
+            const iotdb = (currentSettings?.iotdbs || []).find(d => d.alias === alias);
+            if (!iotdb) return;
+
+            currentFormType = 'iotdb';
+            document.getElementById('dbFormTitle').textContent = '编辑 IoTDB 连接 ' + alias;
+            document.getElementById('dbTypeLabel').textContent = 'IoTDB 时序数据库';
+            resetForm();
+            editingOriginalAlias = alias;
+            document.getElementById('dbAlias').value = iotdb.alias;
+            document.getElementById('dbHost').value = iotdb.host || '';
+            document.getElementById('dbPort').value = iotdb.port || '';
+            document.getElementById('dbUser').value = iotdb.user || '';
+            document.getElementById('dbPassword').placeholder = iotdb.has_password ? '留空则保留原密码' : '';
+            applyType('iotdb');
+            showFormAfter(btn.closest('.db-card'));
         }
 
-        function dbFormValues() {
-            return {
-                alias: document.getElementById('dbAlias').value.trim(),
-                description: document.getElementById('dbDesc').value.trim(),
-                host: document.getElementById('dbHost').value.trim(),
-                port: document.getElementById('dbPort').value.trim() || '5432',
-                dbname: document.getElementById('dbName').value.trim(),
-                user: document.getElementById('dbUser').value.trim(),
-                password: document.getElementById('dbPassword').value,
-            };
+        function editLogs(alias, btn) {
+            const source = (currentSettings?.log_sources || []).find(s => s.alias === alias);
+            if (!source) return;
+
+            currentFormType = 'logs';
+            document.getElementById('dbFormTitle').textContent = '编辑 日志来源 ' + alias;
+            document.getElementById('dbTypeLabel').textContent = '日志目录';
+            resetForm();
+            editingOriginalAlias = alias;
+            document.getElementById('dbAlias').value = source.alias;
+            document.getElementById('logDirs').value = (source.dirs || []).join('\n');
+            applyType('logs');
+            showFormAfter(btn.closest('.db-card'));
         }
 
-        async function testDb() {
+        function cancelCurrent() {
+            const form = document.getElementById('dbForm');
+            form.style.display = 'none';
+            // 移回安全位置（新增按钮之后），避免下次重渲染 #dbList 时被清掉
+            document.getElementById('addDbBtn').after(form);
+            document.getElementById('addMenu').style.display = 'none';
+            editingOriginalAlias = null;
+        }
+
+        function formType() {
+            return currentFormType;
+        }
+
+        function togglePwd() {
+            const pwd = document.getElementById('dbPassword');
+            pwd.type = document.getElementById('showPwd').checked ? 'text' : 'password';
+        }
+
+        async function testCurrent() {
             const resultEl = document.getElementById('dbTestResult');
+            const type = formType();
+            let url, body;
+            if (type === 'iotdb') {
+                url = '/settings/iotdb/test';
+                body = {
+                    alias: document.getElementById('dbAlias').value.trim(),
+                    host: document.getElementById('dbHost').value.trim(),
+                    port: document.getElementById('dbPort').value.trim() || '6667',
+                    user: document.getElementById('dbUser').value.trim(),
+                    password: document.getElementById('dbPassword').value,
+                };
+            } else {
+                url = '/databases/test';
+                body = {
+                    alias: document.getElementById('dbAlias').value.trim(),
+                    original_alias: editingOriginalAlias,
+                    host: document.getElementById('dbHost').value.trim(),
+                    port: document.getElementById('dbPort').value.trim() || '5432',
+                    dbname: document.getElementById('dbName').value.trim(),
+                    user: document.getElementById('dbUser').value.trim(),
+                    password: document.getElementById('dbPassword').value,
+                };
+            }
             resultEl.textContent = '正在测试连接…';
             resultEl.className = 'db-test-result';
             try {
-                const res = await fetch('/databases/test', {
+                const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(dbFormValues()),
+                    body: JSON.stringify(body),
                 });
                 const data = await res.json();
                 resultEl.textContent = data.message || (data.ok ? '连接成功' : '失败');
@@ -913,23 +1139,66 @@
             }
         }
 
-        async function saveDb() {
-            const vals = dbFormValues();
+        async function saveCurrent() {
             const resultEl = document.getElementById('dbTestResult');
-            if (!vals.alias || !vals.host) {
-                resultEl.textContent = '别名和主机地址必填';
+            const type = formType();
+            const alias = document.getElementById('dbAlias').value.trim();
+
+            if (!alias) {
+                resultEl.textContent = '别名/名称必填';
                 resultEl.className = 'db-test-result err';
                 return;
             }
+
+            if (type === 'postgres') {
+                const vals = {
+                    alias: alias,
+                    original_alias: editingOriginalAlias,
+                    description: document.getElementById('dbDesc').value.trim(),
+                    host: document.getElementById('dbHost').value.trim(),
+                    port: document.getElementById('dbPort').value.trim() || '5432',
+                    dbname: document.getElementById('dbName').value.trim(),
+                    user: document.getElementById('dbUser').value.trim(),
+                    password: document.getElementById('dbPassword').value,
+                };
+                if (!vals.host) {
+                    resultEl.textContent = '主机地址必填';
+                    resultEl.className = 'db-test-result err';
+                    return;
+                }
+                await postSave('/databases', vals, resultEl);
+            } else if (type === 'iotdb') {
+                const vals = {
+                    alias: alias,
+                    original_alias: editingOriginalAlias,
+                    host: document.getElementById('dbHost').value.trim(),
+                    port: document.getElementById('dbPort').value.trim() || '6667',
+                    user: document.getElementById('dbUser').value.trim(),
+                    password: document.getElementById('dbPassword').value,
+                };
+                if (!vals.host) {
+                    resultEl.textContent = '主机地址必填';
+                    resultEl.className = 'db-test-result err';
+                    return;
+                }
+                await postSave('/settings/iotdb', vals, resultEl);
+            } else { // logs
+                const raw = document.getElementById('logDirs').value;
+                const dirs = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+                await postSave('/settings/logs', { alias, original_alias: editingOriginalAlias, dirs }, resultEl);
+            }
+        }
+
+        async function postSave(url, body, resultEl) {
             try {
-                const res = await fetch('/databases', {
+                const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(vals),
+                    body: JSON.stringify(body),
                 });
                 const data = await res.json();
                 if (data.ok) {
-                    closeDbForm();
+                    cancelCurrent();
                     await loadSettings();
                 } else {
                     resultEl.textContent = data.error || '保存失败';
@@ -943,96 +1212,23 @@
 
         async function deleteDb(alias) {
             if (!confirm('确定删除数据库「' + alias + '」吗？')) return;
+            cancelCurrent();
             await fetch('/databases/' + encodeURIComponent(alias), { method: 'DELETE' });
             await loadSettings();
         }
 
-        // ---- IoTDB 时序库 ----
-        function renderIotdb(iotdb) {
-            document.getElementById('iotdbHost').value = iotdb.host || '';
-            document.getElementById('iotdbPort').value = iotdb.port || 6667;
-            document.getElementById('iotdbUser').value = iotdb.user || '';
-            document.getElementById('iotdbPassword').value = '';
-            document.getElementById('iotdbPassword').placeholder = iotdb.has_password ? '留空则保留原密码' : '';
-            document.getElementById('iotdbTestResult').textContent = '';
-            document.getElementById('iotdbTestResult').className = 'db-test-result';
+        async function deleteIotdb(alias) {
+            if (!confirm('确定删除 IoTDB 连接「' + alias + '」吗？')) return;
+            cancelCurrent();
+            await fetch('/settings/iotdb/' + encodeURIComponent(alias), { method: 'DELETE' });
+            await loadSettings();
         }
 
-        function iotdbValues() {
-            return {
-                host: document.getElementById('iotdbHost').value.trim(),
-                port: document.getElementById('iotdbPort').value.trim() || '6667',
-                user: document.getElementById('iotdbUser').value.trim(),
-                password: document.getElementById('iotdbPassword').value,
-            };
-        }
-
-        async function testIotdb() {
-            const resultEl = document.getElementById('iotdbTestResult');
-            resultEl.textContent = '正在测试连接…';
-            resultEl.className = 'db-test-result';
-            try {
-                const res = await fetch('/settings/iotdb/test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(iotdbValues()),
-                });
-                const data = await res.json();
-                resultEl.textContent = data.message || (data.ok ? '连接成功' : '失败');
-                resultEl.className = 'db-test-result ' + (data.ok ? 'ok' : 'err');
-            } catch (e) {
-                resultEl.textContent = '测试请求失败: ' + e.message;
-                resultEl.className = 'db-test-result err';
-            }
-        }
-
-        async function saveIotdb() {
-            const resultEl = document.getElementById('iotdbTestResult');
-            const vals = iotdbValues();
-            if (!vals.host) {
-                resultEl.textContent = '主机地址必填';
-                resultEl.className = 'db-test-result err';
-                return;
-            }
-            try {
-                const res = await fetch('/settings/iotdb', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(vals),
-                });
-                const data = await res.json();
-                resultEl.textContent = data.ok ? '已保存' : (data.error || '保存失败');
-                resultEl.className = 'db-test-result ' + (data.ok ? 'ok' : 'err');
-            } catch (e) {
-                resultEl.textContent = '保存失败: ' + e.message;
-                resultEl.className = 'db-test-result err';
-            }
-        }
-
-        // ---- 本机日志目录 ----
-        function renderLogs(dirs) {
-            document.getElementById('logDirs').value = (dirs || []).join('\n');
-            document.getElementById('logResult').textContent = '';
-            document.getElementById('logResult').className = 'db-test-result';
-        }
-
-        async function saveLogs() {
-            const resultEl = document.getElementById('logResult');
-            const raw = document.getElementById('logDirs').value;
-            const dirs = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-            try {
-                const res = await fetch('/settings/logs', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ dirs }),
-                });
-                const data = await res.json();
-                resultEl.textContent = data.ok ? '已保存' : (data.error || '保存失败');
-                resultEl.className = 'db-test-result ' + (data.ok ? 'ok' : 'err');
-            } catch (e) {
-                resultEl.textContent = '保存失败: ' + e.message;
-                resultEl.className = 'db-test-result err';
-            }
+        async function deleteLogs(alias) {
+            if (!confirm('确定删除日志来源「' + alias + '」吗？')) return;
+            cancelCurrent();
+            await fetch('/settings/logs/' + encodeURIComponent(alias), { method: 'DELETE' });
+            await loadSettings();
         }
 
         function escapeAttr(s) {
