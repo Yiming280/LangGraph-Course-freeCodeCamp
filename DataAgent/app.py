@@ -32,13 +32,18 @@ from agent import (
 )
 from tools._settings import (
     add_or_update_database,
+    add_or_update_iotdb,
+    add_or_update_log_source,
     delete_database,
+    delete_iotdb,
+    delete_log_source,
+    get_database,
     get_databases,
     get_default_alias,
     get_iotdb,
+    get_iotdbs,
     get_log_dirs,
-    save_iotdb,
-    save_log_dirs,
+    get_log_sources,
 )
 from tools.database import test_connection
 from tools.iotdb import test_iotdb_connection
@@ -74,8 +79,11 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
 async def root():
-    """聊天页面"""
-    return HTMLResponse(content=(STATIC_DIR / "index.html").read_text(encoding="utf-8"))
+    """聊天页面（禁止缓存，保证前端改动即时生效）"""
+    return HTMLResponse(
+        content=(STATIC_DIR / "index.html").read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
 @app.get("/models")
@@ -117,6 +125,7 @@ async def save_database(request: Request):
     add_or_update_database(
         {
             "alias": alias,
+            "original_alias": (body.get("original_alias") or "").strip(),
             "description": body.get("description", ""),
             "host": host,
             "port": body.get("port", "5432"),
@@ -139,17 +148,28 @@ async def remove_database(alias: str):
 
 @app.post("/databases/test")
 async def test_database(request: Request):
-    """测试数据库连接（用请求体里的连接参数，不落盘）。"""
+    """测试数据库连接（用请求体里的连接参数，不落盘）。
+
+    密码留空时，若 original_alias/alias 对应一个已配置库，则复用该库的密码
+    （env 或已保存的），避免「编辑时不改密码 → 测试却因无密码失败」。
+    """
     body = await request.json()
     host = (body.get("host") or "").strip()
     if not host:
         return {"ok": False, "error": "主机地址必填"}
+    password = body.get("password", "")
+    if not password:
+        ref = (body.get("original_alias") or body.get("alias") or "").strip()
+        if ref:
+            existing = get_database(ref)
+            if existing:
+                password = existing.get("password", "")
     cfg = {
         "host": host,
         "port": str(body.get("port", "5432") or "5432").strip(),
         "dbname": (body.get("dbname") or "").strip(),
         "user": (body.get("user") or "").strip(),
-        "password": body.get("password", ""),
+        "password": password,
     }
     ok, msg = await asyncio.to_thread(test_connection, cfg)
     return {"ok": ok, "message": msg}
@@ -157,7 +177,7 @@ async def test_database(request: Request):
 
 @app.get("/settings")
 async def get_settings():
-    """返回全部连接配置（数据库 + IoTDB + 日志目录）。密码只给 has_password 标记。"""
+    """返回全部连接配置（数据库 + IoTDB + 日志来源）。密码只给 has_password 标记。"""
     default = get_default_alias()
     dbs = [
         {
@@ -173,29 +193,36 @@ async def get_settings():
         }
         for d in get_databases()
     ]
-    iotdb = get_iotdb()
+    iotdbs = [
+        {
+            "alias": d["alias"],
+            "host": d["host"],
+            "port": d["port"],
+            "user": d["user"],
+            "has_password": bool(d.get("password")),
+        }
+        for d in get_iotdbs()
+    ]
+    log_sources = [{"alias": s["alias"], "dirs": s["dirs"]} for s in get_log_sources()]
     return {
         "databases": dbs,
         "default": default,
-        "iotdb": {
-            "host": iotdb["host"],
-            "port": iotdb["port"],
-            "user": iotdb["user"],
-            "has_password": bool(iotdb.get("password")),
-        },
-        "log_dirs": get_log_dirs(),
+        "iotdbs": iotdbs,
+        "log_sources": log_sources,
     }
 
 
 @app.post("/settings/iotdb")
 async def save_iotdb_config(request: Request):
-    """保存 IoTDB 连接参数（密码留空保留原密码）。"""
+    """新增/更新一个 IoTDB 连接（按别名；密码留空保留原密码）。"""
     body = await request.json()
     host = (body.get("host") or "").strip()
     if not host:
         return {"ok": False, "error": "主机地址必填"}
-    save_iotdb(
+    add_or_update_iotdb(
         {
+            "alias": body.get("alias") or "",
+            "original_alias": body.get("original_alias") or "",
             "host": host,
             "port": body.get("port") or 6667,
             "user": body.get("user") or "",
@@ -207,29 +234,56 @@ async def save_iotdb_config(request: Request):
 
 @app.post("/settings/iotdb/test")
 async def test_iotdb_config(request: Request):
-    """测试 IoTDB 连接（用请求体里的参数，不落盘）。"""
+    """测试 IoTDB 连接（用请求体里的参数，不落盘）。密码留空时复用该别名的密码。"""
     body = await request.json()
     host = (body.get("host") or "").strip()
     if not host:
         return {"ok": False, "error": "主机地址必填"}
+    password = body.get("password") or ""
+    alias = (body.get("alias") or "").strip()
+    if not password and alias:
+        existing = get_iotdb(alias)
+        if existing:
+            password = existing["password"]
     cfg = {
         "host": host,
         "port": body.get("port") or 6667,
         "user": body.get("user") or "",
-        "password": body.get("password") or "",
+        "password": password,
     }
     ok, msg = await asyncio.to_thread(test_iotdb_connection, cfg)
     return {"ok": ok, "message": msg}
 
 
+@app.delete("/settings/iotdb/{alias}")
+async def remove_iotdb_config(alias: str):
+    """删除一个 IoTDB 连接。"""
+    ok = delete_iotdb(alias)
+    if not ok:
+        return {"ok": False, "error": "该连接不存在"}
+    return {"ok": True}
+
+
 @app.post("/settings/logs")
-async def save_log_dirs_config(request: Request):
-    """保存日志白名单目录（逗号或换行分隔）。"""
+async def save_log_source_config(request: Request):
+    """新增/更新一个日志来源（按别名 + 目录，逗号或换行分隔）。"""
     body = await request.json()
-    dirs = body.get("dirs") or []
-    if isinstance(dirs, str):
-        dirs = [d for d in dirs.replace("\n", ",").split(",") if d.strip()]
-    save_log_dirs([d for d in dirs if d])
+    add_or_update_log_source(
+        {
+            "alias": body.get("alias") or "",
+            "original_alias": body.get("original_alias") or "",
+            "dirs": body.get("dirs") or [],
+        }
+    )
+    return {"ok": True}
+
+
+@app.delete("/settings/logs/{alias}")
+async def remove_log_source_config(alias: str):
+    """删除一个日志来源。"""
+    ok = delete_log_source(alias)
+    if not ok:
+        return {"ok": False, "error": "该来源不存在"}
     return {"ok": True}
 
 
