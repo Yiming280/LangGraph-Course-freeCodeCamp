@@ -5,9 +5,9 @@ IoTDB 记录产线工位状态变换（root.iot 库，TTL=7 天，时间精度�
 默认 10.8.22.20:6667 / root / root（IoTDB 默认账号）：
     IOTDB_HOST / IOTDB_PORT / IOTDB_USER / IOTDB_PASSWORD
 
-数据模型（已探明）：
+数据模型：
     root.iot.device.<设备ID>.group.<工位组ID>.<测点>
-    33 个设备，每个 group 下 11 个测点：
+    多台设备，每台设备下有多个工位组（group）；每个 group 下 11 个测点：
       Station(工位名/TEXT)  ProductionLine(产线/TEXT)  State(状态/INT32)
       AutoMode / Trigger / HeartBeat / AllowDocking / DockingFinish /
       LowerMaterialPresent / UpperMaterialPresent / WorksationAlarm（布尔）
@@ -28,10 +28,12 @@ load_dotenv()
 # 只读白名单：仅放行这些查询前缀，其余（INSERT/DELETE/CREATE/DROP/ALTER/SET…）一律拒绝
 _READONLY_RE = re.compile(r"^\s*(SELECT|SHOW|COUNT|DESCRIBE|LIST|EXPLAIN)\b", re.IGNORECASE)
 
-# 上下文保护：最多返回 10 行 / 10 列 / 20000 字符，超长结果省略并提示总数
+# 上下文保护：最多返回 10 行 / 10 列 / 6000 字符，超长结果省略并提示总数。
+# _MAX_CHARS 限的是「喂回模型的完整结果」——太大（如 2 万字符）会把上下文撑爆，
+# 加剧思考模型在后续轮次被截断（只思考、无回答）的概率，这里收紧到 6000。
 _MAX_ROWS = 10
 _MAX_COLS = 10
-_MAX_CHARS = 20000
+_MAX_CHARS = 6000
 
 
 def test_iotdb_connection(cfg: dict) -> tuple[bool, str]:
@@ -71,16 +73,20 @@ def test_iotdb_connection(cfg: dict) -> tuple[bool, str]:
             pass
 
 
-def _query(sql: str, alias: str = "") -> str:
-    """执行一条只读语句，返回格式化字符串；失败返回错误字符串（不抛异常）。"""
+def _run_query(sql: str, alias: str = "") -> tuple:
+    """执行一条只读语句，返回 (DataFrame|None, error_str)；成功时 error_str 为空。
+
+    从 _query 里拆出来，供需要拿到原始 DataFrame 再自己汇总的工具复用
+    （如 list_iotdb_devices 要去重到设备级）。
+    """
     cfg = get_iotdb(alias)
     if cfg is None:
-        return f"IoTDB error: 未知连接别名 {alias!r}（可用连接见 list_iotdb_sources）"
+        return None, f"IoTDB error: 未知连接别名 {alias!r}（可用连接见 list_iotdb_sources）"
     session = Session(cfg["host"], cfg["port"], cfg["user"], cfg["password"])
     try:
         session.open(enable_rpc_compression=False)
     except Exception as e:
-        return f"IoTDB error: 连接失败 - {e}"
+        return None, f"IoTDB error: 连接失败 - {e}"
     try:
         ds = session.execute_query_statement(sql)
         try:
@@ -91,12 +97,20 @@ def _query(sql: str, alias: str = "") -> str:
             except Exception:
                 pass
     except Exception as e:
-        return f"IoTDB error: {e}"
+        return None, f"IoTDB error: {e}"
     finally:
         try:
             session.close()
         except Exception:
             pass
+    return df, ""
+
+
+def _query(sql: str, alias: str = "") -> str:
+    """执行一条只读语句，返回格式化字符串；失败返回错误字符串（不抛异常）。"""
+    df, err = _run_query(sql, alias)
+    if err:
+        return err
     return _format(df)
 
 
@@ -195,6 +209,28 @@ def _with_wildcard(p: str) -> str:
     return p + ".**" if p and not p.endswith("*") else p
 
 
+def _summarize_devices(df) -> str:
+    """SHOW DEVICES 结果 → 按设备级（device）去重汇总。
+
+    SHOW DEVICES 返回的是「设备.group.<工位组ID>」粒度，一台设备带 7~10 个组，
+    全列出来是几十行 UUID 噪音、撑爆上下文。这里按 device 前缀去重，只保留
+    设备数 + 每台设备几个组，同时给出可直接传给 show_iotdb_timeseries / query_iotdb
+    的路径前缀。
+    """
+    if df is None or len(df) == 0:
+        return "(0 rows)"
+    col = "Device" if "Device" in df.columns else df.columns[0]
+    devices: dict[str, int] = {}
+    for v in df[col].astype(str):
+        # root.iot.device.<设备ID>.group.<工位组ID> → 截到 device 级
+        key = v.split(".group.")[0] if ".group." in v else v
+        devices[key] = devices.get(key, 0) + 1
+    lines = [f"共 {len(devices)} 台设备，{sum(devices.values())} 个工位组："]
+    for dev, n in devices.items():
+        lines.append(f"- {dev}（{n} 个组）")
+    return "\n".join(lines)
+
+
 @tool
 def list_iotdb_devices(path: str = "", alias: str = "") -> str:
     """列出指定 IoTDB 连接的设备（device）清单，用于摸清有哪些工位/设备。
@@ -204,7 +240,10 @@ def list_iotdb_devices(path: str = "", alias: str = "") -> str:
         alias: 可选，IoTDB 连接别名；不传用默认（第一个）。
     """
     p = _with_wildcard((path or "").strip())
-    return _query(f"SHOW DEVICES {p or 'root.**'}", alias)
+    df, err = _run_query(f"SHOW DEVICES {p or 'root.**'}", alias)
+    if err:
+        return err
+    return _summarize_devices(df)
 
 
 @tool
