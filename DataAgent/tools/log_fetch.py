@@ -136,7 +136,7 @@ def list_log_files(directory: str = "", alias: str = "") -> str:
 
 
 @tool(parse_docstring=True)
-def read_log_file(path: str, tail: int = 200, keyword: str = "", alias: str = "") -> str:
+def read_log_file(path: str = "", tail: int = 200, keyword: str = "", alias: str = "") -> str:
     """读取指定日志文件末尾若干行（可选按关键词过滤）。
 
     Args:
@@ -146,6 +146,8 @@ def read_log_file(path: str, tail: int = 200, keyword: str = "", alias: str = ""
             若要在整个目录内检索请用 search_logs。
         alias: 可选，日志来源别名（见 list_log_sources）；不传用默认（第一个）。
     """
+    if not (path or "").strip():
+        return "缺少 path 参数：请提供要读取的日志文件路径（相对或绝对路径）。不确定有哪些文件时，先调用 list_log_files() 列出日志目录下的文件。"
     p = _resolve(path, alias)
     if p is None:
         return f"路径 {path!r} 不在允许的日志目录内。"
@@ -171,7 +173,7 @@ def read_log_file(path: str, tail: int = 200, keyword: str = "", alias: str = ""
 
 
 @tool(parse_docstring=True)
-def search_logs(keyword: str, directory: str = "", tail: int = 200, alias: str = "") -> str:
+def search_logs(keyword: str = "", directory: str = "", tail: int = 200, alias: str = "") -> str:
     """在日志目录内检索包含关键词的行（返回 文件名:行号: 内容）。
 
     配合 IoTDB 工具：先拿到状态变化的时间点/关键词，再到日志里定位对应记录。
@@ -184,7 +186,7 @@ def search_logs(keyword: str, directory: str = "", tail: int = 200, alias: str =
     """
     kw = (keyword or "").strip()
     if not kw:
-        return "请提供 keyword 检索关键词。"
+        return "缺少 keyword 参数：请提供检索关键词。可先 list_log_files() 看有哪些文件、read_log_file() 看文件内容，再确定关键词。"
     kw = kw.lower()
     base = _resolve(directory, alias) if directory else _log_dirs(alias)[0].resolve()
     if base is None:
