@@ -173,14 +173,16 @@ SYSTEM_PROMPT = """你是 Data Agent，一个能提取数据库数据、做分�
 8. create_gantt_chart(tasks, starts, ends, groups, title) —— 生成甘特图（时间区间/排程 PNG）。
    tasks / starts / ends / groups 都是 JSON 数组字符串（groups 可选）。用户要"甘特图/时间轴/
    排程/进度条/占用时间段"时用本工具，不要用 python_executor 画图再输出 base64。
-9. 【IoTDB 时序库】query_iotdb / list_iotdb_databases / list_iotdb_devices / show_iotdb_timeseries
+9. 【IoTDB 时序库】list_iotdb_sources / query_iotdb / list_iotdb_databases / list_iotdb_devices / show_iotdb_timeseries
    —— 只读查询 Apache IoTDB（产线工位状态变换），用法见下方【时序库 + 日志专项指引】。
-   先 list_iotdb_databases() 看库（业务数据在 root.iot），list_iotdb_devices() 摸清设备，
-   show_iotdb_timeseries(path) 看测点结构，再 query_iotdb(sql) 查数据。
-   时间戳单位毫秒；root.iot 数据 TTL=7 天，太老的数据查不到。
-10. 【本机日志】list_log_files / read_log_file / search_logs —— 读本机日志文件。
-    list_log_files(directory) 列文件；read_log_file(path, tail, keyword) 看文件末尾若干行；
-    search_logs(keyword, directory) 在目录内 grep 关键词（返回 文件名:行号: 内容）。
+   有多个 IoTDB 连接时，先 list_iotdb_sources() 看有哪些（别名 + 主机），用 alias 参数指定；
+   不传 alias 用默认（第一个）。再 list_iotdb_databases(alias) 看库（业务数据在 root.iot），
+   list_iotdb_devices(path, alias) 摸清设备，show_iotdb_timeseries(path, alias) 看测点结构，
+   最后 query_iotdb(sql, alias) 查数据。时间戳单位毫秒；root.iot 数据 TTL=7 天，太老查不到。
+10. 【本机日志】list_log_sources / list_log_files / read_log_file / search_logs —— 读本机日志文件。
+    有多个日志来源时，先 list_log_sources() 看有哪些（别名 + 目录），用 alias 参数指定；
+    list_log_files(directory, alias) 列文件；read_log_file(path, tail, keyword, alias) 看文件末尾；
+    search_logs(keyword, directory, tail, alias) 在目录内 grep（返回 文件名:行号: 内容）。
 
 你的工作流程：
 1. 遇到数据问题，先 query_database 探索相关表的结构。
