@@ -411,11 +411,15 @@ async def _stream_ollama(client, model, messages: list[dict], writer):
     return thinking, content, tool_calls, done_reason
 
 
-async def _stream_openai(client, model, messages: list[dict], writer):
-    """OpenAI 兼容后端：思考在 reasoning_content 字段，tool_calls 按 index 流式累加。"""
+async def _stream_openai(client, model, messages: list[dict], writer, enable_thinking: bool = True):
+    """OpenAI 兼容后端：思考在 reasoning_content 字段，tool_calls 按 index 流式累加。
+
+    enable_thinking：空回答重试时传 False，让模型跳过思考直接产出结论。
+    """
     thinking = ""
     content = ""
     tool_calls_by_index: dict[int, dict] = {}
+    finish_reason = ""
 
     async for chunk in await client.chat.completions.create(
         model=model,
@@ -423,12 +427,14 @@ async def _stream_openai(client, model, messages: list[dict], writer):
         tools=cast(Any, OPENAI_TOOLS),
         stream=True,
         temperature=TEMPERATURE,
+        max_tokens=MAX_OUTPUT_TOKENS,
         # Qwen3 思考模式；若代理不接受该参数（报 400）则删掉这行，由服务端默认控制
-        extra_body={"enable_thinking": True},
+        extra_body={"enable_thinking": enable_thinking},
     ):
         if not chunk.choices:
             continue
-        delta = chunk.choices[0].delta
+        choice = chunk.choices[0]
+        delta = choice.delta
 
         th = getattr(delta, "reasoning_content", "") or ""
         ct = delta.content or ""
@@ -451,6 +457,8 @@ async def _stream_openai(client, model, messages: list[dict], writer):
                         e["name"] += tc.function.name
                     if tc.function.arguments:
                         e["args"] += tc.function.arguments
+        if choice.finish_reason:
+            finish_reason = choice.finish_reason
 
     tool_calls = []
     for e in tool_calls_by_index.values():
@@ -466,7 +474,7 @@ async def _stream_openai(client, model, messages: list[dict], writer):
                 "type": "tool_call",
             }
         )
-    return thinking, content, tool_calls
+    return thinking, content, tool_calls, finish_reason
 
 
 async def model_call(state: AgentState, config) -> AgentState:
@@ -488,14 +496,37 @@ async def model_call(state: AgentState, config) -> AgentState:
     try:
         if provider == "openai":
             client = _get_openai_client(api_key)
-            thinking, content, tool_calls = await _stream_openai(client, OPENAI_MODEL, messages, writer)
+            thinking, content, tool_calls, finish_reason = await _stream_openai(client, OPENAI_MODEL, messages, writer)
         else:
             client = _get_ollama_client()
-            thinking, content, tool_calls = await _stream_ollama(client, OLLAMA_MODEL, messages, writer)
+            thinking, content, tool_calls, finish_reason = await _stream_ollama(client, OLLAMA_MODEL, messages, writer)
     except Exception as e:
         # 只在这里报一次错（不再 raise，避免 app.py 里又报一遍重复的原始 HTML）
         writer({"type": "error", "content": f"模型调用失败：{format_llm_error(e)}"})
         return {"messages": []}
+
+    # 空回答兜底：模型吐了思考却没产出任何 content、也没调工具（常见于思考过长被截断）
+    if not content.strip() and not tool_calls:
+        if finish_reason == "length":
+            # 思考阶段就被长度截断，重试大概率还是超长，直接报错并给出建议
+            writer({"type": "error", "content": "回答在思考阶段被截断（输出超长），请缩小问题范围后重试"})
+            return {"messages": []}
+        # 未被截断却空回答：重试一次，明确要求直接给出结论（openai 后端同时关掉思考）
+        try:
+            retry_messages = [
+                *messages,
+                {"role": "user", "content": "请直接给出最终结论，不要继续思考，也不要再调用工具。"},
+            ]
+            if provider == "openai":
+                thinking, content, tool_calls, _ = await _stream_openai(client, OPENAI_MODEL, retry_messages, writer, enable_thinking=False)
+            else:
+                thinking, content, tool_calls, _ = await _stream_ollama(client, OLLAMA_MODEL, retry_messages, writer)
+        except Exception:
+            content = ""
+        # 重试仍为空则兜底一句，避免前端只看到"思考完 done"
+        if not content.strip() and not tool_calls:
+            content = "抱歉，本次没有生成有效回答，请换一种更具体或更小的问法再试一次。"
+            writer({"type": "content", "content": content})
 
     ai_msg = AIMessage(
         content=content,
@@ -519,6 +550,22 @@ def _current_tool_rounds(messages: Sequence[BaseMessage]) -> int:
         if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
             rounds += 1
     return rounds
+
+
+def _count_repeated_empty(messages: Sequence[BaseMessage], name: str, args: dict) -> int:
+    """统计本轮对话里，同一工具以相同空参数被调用的次数（含当前这次）。
+
+    用于打破「模型反复空参调用 → 报错 → 再空参」的死循环，避免烧光 MAX_TOOL_ROUNDS。
+    """
+    count = 0
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage):
+            break
+        if isinstance(m, AIMessage):
+            for prev in getattr(m, "tool_calls", None) or []:
+                if prev.get("name") == name and (prev.get("args") or {}) == (args or {}):
+                    count += 1
+    return count
 
 
 def should_continue(state: AgentState) -> str:
@@ -573,6 +620,27 @@ async def call_tools(state: AgentState) -> AgentState:
                     "type": "tool_result",
                     "name": tc["name"],
                     "content": f"未知工具: {tc['name']}",
+                    "error": True,
+                }
+            )
+            continue
+
+        args = tc.get("args") or {}
+        # 空参重复守卫：同一工具以空参被反复调用时，跳过执行并注入纠正提示，
+        # 避免模型空参死循环、烧光 MAX_TOOL_ROUNDS。
+        if not args and _count_repeated_empty(state["messages"], tc["name"], args) >= 2:
+            hint = (
+                f"你已多次以空参数调用 {tc['name']}，均被拒绝，请停止重复。"
+                f"补全该工具所需的必填参数后再重试。"
+            )
+            new_messages.append(
+                ToolMessage(content=hint, tool_call_id=tc["id"], name=tc["name"])
+            )
+            writer(
+                {
+                    "type": "tool_result",
+                    "name": tc["name"],
+                    "content": hint,
                     "error": True,
                 }
             )
