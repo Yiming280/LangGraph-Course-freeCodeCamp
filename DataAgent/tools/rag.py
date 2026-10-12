@@ -24,7 +24,7 @@ _PERSIST_DIR = str(_AGENTS_DIR)  # Chroma 持久化目录（内含 chroma.sqlite
 _COLLECTION = "stock_market"
 
 # ---- 远程 Ollama（embedding 模型需与建库时一致）----
-_OLLAMA_BASE_URL = os.getenv("OLLAMA_HOST", "http://10.8.20.83:11435")
+_OLLAMA_BASE_URL = os.getenv("OLLAMA_HOST", "http://10.8.1.106:11434")
 _EMBED_MODEL = "nomic-embed-text"
 
 # 懒加载缓存：首次调用才建 embedding / 连 Chroma
