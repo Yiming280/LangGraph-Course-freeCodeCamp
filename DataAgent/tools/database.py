@@ -29,6 +29,53 @@ def _connect(db: str):
         return None, f"连接失败 - {e}"
 
 
+def _columns_of(conn, table: str) -> str:
+    """返回某表在 public schema 下的列清单（逗号分隔），失败返回空串。"""
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT string_agg(column_name, ', ' ORDER BY ordinal_position) "
+            "FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name=%s",
+            (table,),
+        )
+        row = cur.fetchone()
+        return row[0] if row and row[0] else ""
+    except Exception:
+        return ""
+
+
+def _schema_hint(conn, e) -> str:
+    """把常见 SQL 错误翻译成能直接照做的纠错提示，并附带真实 schema。
+
+    针对「列/表不存在」「类型不匹配」「函数不存在」这几类小模型高频错误，
+    把 information_schema 里的真实结构喂回模型，让它一次改对，而不是瞎猜烧轮次。
+    """
+    pgcode = getattr(e, "pgcode", None)
+    diag = getattr(e, "diag", None)
+    table = getattr(diag, "table_name", None) if diag else None
+    column = getattr(diag, "column_name", None) if diag else None
+
+    # 出错后事务处于失败状态，先回滚才能继续查 information_schema
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+    if pgcode == "42703" and table:  # column does not exist
+        cols = _columns_of(conn, table)
+        if cols:
+            return f"[纠错提示] 表 {table} 没有列 {column or '?'}，实际列: {cols}"
+        return f"[纠错提示] 表 {table} 没有列 {column or '?'}，请先查该表结构。"
+    if pgcode == "42P01":  # relation does not exist
+        return "[纠错提示] 表/关系不存在，请先查 information_schema.tables 确认表名。"
+    if pgcode == "42804":  # 类型不匹配（如 UNION 多列类型不一致）
+        return "[纠错提示] 列类型不匹配，请给各列显式 cast（::text / ::timestamp / ::numeric）。"
+    if pgcode == "42883":  # function does not exist
+        return "[纠错提示] 函数不存在或参数类型不符（如 round(double,int)），请改用 ::numeric(精度,小数位) 等。"
+    return ""
+
+
 def test_connection(cfg: dict) -> tuple[bool, str]:
     """测试数据库连接（供网页端「测试连接」使用）。返回 (ok, message)。
 
@@ -87,9 +134,14 @@ def query_database(sql: str, db: str = "") -> str:
         rows = cur.fetchall()
         if not rows:
             return "(Query returned 0 rows)"
-        return f"({len(rows)} rows)\n" + str(rows[:10])  # 最多返回 10 行，控制上下文
+        return f"({len(rows)} rows)\n" + str(rows)
     except Exception as e:
-        return f"Database error: {e}"
+        result = f"Database error: {e}"
+        if isinstance(e, psycopg2.Error):
+            hint = _schema_hint(conn, e)
+            if hint:
+                result += "\n" + hint
+        return result
     finally:
         conn.close()
 
