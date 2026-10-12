@@ -23,6 +23,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 import memory as mem
+from error_taxonomy import LOG_FILE, aggregate
 from agent import (
     DEFAULT_PROVIDER,
     available_models,
@@ -313,6 +314,34 @@ async def import_memory_file(request: Request):
         return {"ok": False, "error": "文件格式不匹配（应为 dataagent-memory 导出文件）"}
     count = await mem.import_memory(app.state.checkpointer, data)
     return {"ok": True, "imported_sessions": count}
+
+
+@app.get("/errors/stats")
+async def errors_stats():
+    """返回错误分类统计：7 大类计数 + 占比（按计数降序），以及 error_type 明细。"""
+    return aggregate()
+
+
+@app.get("/errors/export")
+async def export_errors():
+    """下载 error_log.jsonl 原始错误记录。"""
+    content = LOG_FILE.read_text(encoding="utf-8") if LOG_FILE.exists() else ""
+    return Response(
+        content=content,
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": 'attachment; filename="error_log.jsonl"'},
+    )
+
+
+@app.delete("/errors")
+async def clear_errors():
+    """清空错误日志。"""
+    try:
+        with open(LOG_FILE, "w", encoding="utf-8"):
+            pass
+    except OSError:
+        return {"ok": False, "error": "清空失败"}
+    return {"ok": True}
 
 
 @app.post("/chat")

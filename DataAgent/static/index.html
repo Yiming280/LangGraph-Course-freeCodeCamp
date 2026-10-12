@@ -552,6 +552,25 @@
             cursor: pointer;
         }
         .db-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .err-row { display: flex; flex-direction: column; gap: 4px; }
+        .err-row .err-head {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.82rem;
+        }
+        .err-row .err-head .err-pct { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+        .err-bar {
+            height: 8px;
+            border-radius: 4px;
+            background: var(--surface2);
+            overflow: hidden;
+        }
+        .err-bar .err-fill {
+            height: 100%;
+            border-radius: 4px;
+            background: var(--accent);
+            transition: width 0.3s ease;
+        }
         .add-menu {
             display: flex;
             flex-direction: column;
@@ -668,13 +687,14 @@
             <span class="dot"></span>
             <h1>Data Agent</h1>
             <select id="modelSelect" class="model-select" title="选择模型">
-                <option value="ollama">qwen3.6:27b</option>
+                <option value="ollama">qwen3.8:27b</option>
                 <option value="openai">qwen3.5:9b</option>
             </select>
             <input id="apiKey" class="api-key-input" type="password" placeholder="API Key（可选）"
                 title="留空使用服务器默认 Key" autocomplete="off">
             <button class="new-chat-btn" onclick="openMemModal()">💾 记忆</button>
             <button class="new-chat-btn" onclick="openDbModal()">⚙️ 连接配置</button>
+            <button class="new-chat-btn" onclick="openErrModal()">📊 错误统计</button>
             <button class="new-chat-btn" onclick="newChat()">＋ 新会话</button>
         </header>
 
@@ -796,6 +816,25 @@
                 <button class="db-add-btn" onclick="document.getElementById('memFile').click()">⬆ 导入记忆</button>
                 <input type="file" id="memFile" accept="application/json,.json" style="display:none" onchange="importMemory(this)">
                 <div id="memResult" class="db-test-result"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 错误统计弹窗 -->
+    <div class="db-modal" id="errModal">
+        <div class="db-panel">
+            <div class="db-header">
+                <h2>错误统计（Error Taxonomy）</h2>
+                <button class="db-close" onclick="closeErrModal()">✕</button>
+            </div>
+            <div class="db-body">
+                <div class="db-meta" id="errTotal">—</div>
+                <div id="errList" class="db-list"></div>
+                <div style="display:flex;gap:8px">
+                    <button class="db-add-btn" onclick="exportErrors()">⬇ 导出记录</button>
+                    <button class="db-add-btn" onclick="clearErrors()">清空</button>
+                </div>
+                <div id="errResult" class="db-test-result"></div>
             </div>
         </div>
     </div>
@@ -1242,6 +1281,61 @@
 
         function closeMemModal() {
             document.getElementById('memModal').classList.remove('show');
+        }
+
+        function openErrModal() {
+            document.getElementById('errModal').classList.add('show');
+            loadErrors();
+        }
+
+        function closeErrModal() {
+            document.getElementById('errModal').classList.remove('show');
+        }
+
+        async function loadErrors() {
+            const totalEl = document.getElementById('errTotal');
+            const listEl = document.getElementById('errList');
+            try {
+                const res = await fetch('/errors/stats');
+                const data = await res.json();
+                totalEl.textContent = '共记录 ' + data.total + ' 条错误';
+                if (!data.categories || data.categories.length === 0) {
+                    listEl.innerHTML = '<div class="db-meta">暂无错误记录</div>';
+                    return;
+                }
+                listEl.innerHTML = data.categories.map(c => (
+                    '<div class="err-row">' +
+                    '<div class="err-head"><span>' + escapeHtml(c.label) +
+                    ' <span class="db-meta">(' + c.count + ')</span></span>' +
+                    '<span class="err-pct">' + c.percent + '%</span></div>' +
+                    '<div class="err-bar"><div class="err-fill" style="width:' + c.percent + '%"></div></div>' +
+                    '</div>'
+                )).join('');
+            } catch (e) {
+                listEl.innerHTML = '<div class="db-meta">加载失败: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function exportErrors() {
+            window.location = '/errors/export';
+        }
+
+        async function clearErrors() {
+            if (!confirm('确定清空全部错误记录？')) return;
+            const resultEl = document.getElementById('errResult');
+            resultEl.className = 'db-test-result';
+            resultEl.textContent = '正在清空…';
+            try {
+                const res = await fetch('/errors', { method: 'DELETE' });
+                const data = await res.json();
+                if (!data.ok) throw new Error(data.error || '清空失败');
+                resultEl.textContent = '已清空';
+                resultEl.className = 'db-test-result ok';
+                loadErrors();
+            } catch (e) {
+                resultEl.textContent = '清空失败: ' + e.message;
+                resultEl.className = 'db-test-result err';
+            }
         }
 
         async function exportMemory() {
