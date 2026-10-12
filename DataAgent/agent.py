@@ -17,6 +17,7 @@ import uuid
 from typing import Annotated, Any, Sequence, TypedDict, cast
 
 from dotenv import load_dotenv
+from pydantic import ValidationError
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -30,6 +31,7 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
+from error_taxonomy import record_error
 from tools import ALL_TOOLS, TOOL_MAP
 from tools._db_config import databases_summary
 
@@ -38,15 +40,19 @@ load_dotenv()
 # ============================================================
 # 配置
 # ============================================================
-# LLM 后端：ollama（qwen3.6:27b）| openai（OpenAI 兼容代理，qwen3.5:9b）
+# LLM 后端：ollama（qwen3.8:27b）| openai（OpenAI 兼容代理，qwen3.5:9b）
 # 默认后端由 .env 的 LLM_PROVIDER 决定；网页端可在每次请求里用 provider/api_key 覆盖。
 # 两个后端都用原生客户端：qwen 的思考在 thinking/reasoning_content 字段、回答在 content、
 # 工具调用在 tool_calls，三者都能在流式下逐 token 拿到（langchain 的 ChatOllama 会丢思考字段）。
 DEFAULT_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
 
 # ---- Ollama ----
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://10.8.20.94:11435")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.6:27b")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://10.8.1.106:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.8:27b")
+
+# Ollama 客户端超时（秒）。27b 模型空闲后冷启动（磁盘→显存）实测首 token 约 128s，
+# 必须大于该值，否则冷启动请求会在出字前超时。可在 .env 用 OLLAMA_TIMEOUT 覆盖。
+OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "300"))
 
 # ---- OpenAI 兼容代理（provider=openai 时使用）----
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://aiproxy.agile-robots.cn/v1")
@@ -57,7 +63,7 @@ TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
 
 # 输出 token 上限。Qwen 思考模式下 reasoning_content 会先占掉大量输出预算，
 # 默认给足空间，避免"思考过长 → 最终回答被截断/为空"。可在 .env 用 MAX_OUTPUT_TOKENS 覆盖。
-MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "8192"))
+MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "16384"))
 
 
 def available_models() -> list[dict]:
@@ -78,7 +84,7 @@ def _get_ollama_client():
     if _ollama_client is None:
         import ollama
 
-        _ollama_client = ollama.AsyncClient(host=OLLAMA_HOST, timeout=60.0)
+        _ollama_client = ollama.AsyncClient(host=OLLAMA_HOST, timeout=OLLAMA_TIMEOUT)
     return _ollama_client
 
 
@@ -102,8 +108,10 @@ def _get_openai_client(api_key: str | None):
 def format_llm_error(e: Exception) -> str:
     """把 LLM 调用异常转成一句人能读懂的短话，剥掉代理返回的 HTML。"""
     try:
+        import httpx
         from openai import APIConnectionError, APITimeoutError, APIStatusError
     except ImportError:  # 纯 ollama 环境（没装 openai SDK）时兜底
+        httpx = None
         APIConnectionError = APITimeoutError = APIStatusError = ()
 
     raw = str(e)
@@ -112,6 +120,7 @@ def format_llm_error(e: Exception) -> str:
     # 超时（含代理 HTML 里的 "Gateway Time-out" / "time-out" 等写法）
     if (
         isinstance(e, APITimeoutError)
+        or (httpx is not None and isinstance(e, httpx.TimeoutException))
         or "timed out" in low
         or "timeout" in low
         or "time-out" in low
@@ -132,7 +141,42 @@ def format_llm_error(e: Exception) -> str:
     # 最后兜底：剥掉 HTML 标签、压成一行、截断，避免把整段 HTML 打给用户
     plain = re.sub(r"<[^>]+>", " ", raw)
     plain = re.sub(r"\s+", " ", plain).strip()
-    return plain[:200] or "模型调用失败"
+    return plain[:200] or f"未知错误（{type(e).__name__}）"
+
+
+def _classify_llm_error(e: Exception) -> str:
+    """把 LLM 调用异常归到一个 error_type（供 error_taxonomy.record_error 使用）。"""
+    try:
+        import httpx
+        from openai import APIConnectionError, APITimeoutError
+    except ImportError:
+        httpx = None
+        APIConnectionError = APITimeoutError = ()
+    low = str(e).lower()
+    if (
+        isinstance(e, APITimeoutError)
+        or (httpx is not None and isinstance(e, httpx.TimeoutException))
+        or "timed out" in low
+        or "timeout" in low
+        or "time-out" in low
+        or "time out" in low
+    ):
+        return "llm_timeout"
+    if isinstance(e, APIConnectionError) or "connect" in low or "no route to host" in low:
+        return "llm_connection_error"
+    return "llm_status_error"
+
+
+def _runtime_meta(config) -> dict:
+    """从 LangGraph config 提取 task_id / provider / model，供错误记录使用。"""
+    cfg = config.get("configurable", {}) or {}
+    provider = (cfg.get("provider") or "").strip().lower() or DEFAULT_PROVIDER
+    return {
+        "task_id": cfg.get("thread_id", ""),
+        "provider": provider,
+        "model": OPENAI_MODEL if provider == "openai" else OLLAMA_MODEL,
+    }
+
 
 # 工具转换（langchain @tool → OpenAI 函数格式，ollama/openai 通用），模块级只算一次
 OPENAI_TOOLS = [convert_to_openai_tool(t) for t in ALL_TOOLS]
@@ -183,9 +227,11 @@ SYSTEM_PROMPT = """你是 Data Agent，一个能提取数据库数据、做分�
     有多个日志来源时，先 list_log_sources() 看有哪些（别名 + 目录），用 alias 参数指定；
     list_log_files(directory, alias) 列文件；read_log_file(path, tail, keyword, alias) 看文件末尾；
     search_logs(keyword, directory, tail, alias) 在目录内 grep（返回 文件名:行号: 内容）。
+11. describe_database(db="") —— 一次性返回某库的完整 schema：全部表名 + 每张表的列清单 + 近似行数。
+    **分析任何数据前先调用它**，拿到真实的表/列清单再写 SQL，禁止凭印象猜列名。
 
 你的工作流程：
-1. 遇到数据问题，先 query_database 探索相关表的结构。
+1. 先 describe_database() 拿到该库全部表与列的真实清单，再按需写 SQL。
 2. 用 SELECT 提取所需数据（注意只读，不要写库）。
 3. 需要可视化时，把数据整理成 JSON 数组传给图表工具，让工具生成图片。
 4. 复杂的计算/清洗/多步分析用 python_executor 完成。
@@ -366,20 +412,26 @@ def convert_messages(messages: Sequence[BaseMessage], provider: str) -> list[dic
 # ============================================================
 # 节点
 # ============================================================
-async def _stream_ollama(client, model, messages: list[dict], writer):
-    """Ollama 后端：思考在 thinking 字段，tool_calls 一次性给出完整对象（无 id）。"""
+async def _stream_ollama(client, model, messages: list[dict], writer, tools=OPENAI_TOOLS):
+    """Ollama 后端：思考在 thinking 字段，tool_calls 一次性给出完整对象（无 id）。
+
+    tools 传空列表时不下发任何工具（收尾节点用，强制模型只出文本、不再调工具）。
+    """
     thinking = ""
     content = ""
     raw_tool_calls = None
     done_reason = ""
 
-    async for part in await client.chat(
-        model=model,
-        messages=messages,
-        tools=OPENAI_TOOLS,
-        stream=True,
-        options={"temperature": TEMPERATURE, "num_predict": MAX_OUTPUT_TOKENS},
-    ):
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "options": {"temperature": TEMPERATURE, "num_predict": MAX_OUTPUT_TOKENS},
+    }
+    if tools:
+        kwargs["tools"] = tools
+
+    async for part in await client.chat(**kwargs):
         m = part.message
         th = getattr(m, "thinking", "") or ""
         ct = m.content or ""
@@ -411,26 +463,30 @@ async def _stream_ollama(client, model, messages: list[dict], writer):
     return thinking, content, tool_calls, done_reason
 
 
-async def _stream_openai(client, model, messages: list[dict], writer, enable_thinking: bool = True):
+async def _stream_openai(client, model, messages: list[dict], writer, enable_thinking: bool = True, tools=OPENAI_TOOLS):
     """OpenAI 兼容后端：思考在 reasoning_content 字段，tool_calls 按 index 流式累加。
 
     enable_thinking：空回答重试时传 False，让模型跳过思考直接产出结论。
+    tools 传空列表时不下发任何工具（收尾节点用，强制模型只出文本、不再调工具）。
     """
     thinking = ""
     content = ""
     tool_calls_by_index: dict[int, dict] = {}
     finish_reason = ""
 
-    async for chunk in await client.chat.completions.create(
-        model=model,
-        messages=cast(Any, messages),
-        tools=cast(Any, OPENAI_TOOLS),
-        stream=True,
-        temperature=TEMPERATURE,
-        max_tokens=MAX_OUTPUT_TOKENS,
+    kwargs = {
+        "model": model,
+        "messages": cast(Any, messages),
+        "stream": True,
+        "temperature": TEMPERATURE,
+        "max_tokens": MAX_OUTPUT_TOKENS,
         # Qwen3 思考模式；若代理不接受该参数（报 400）则删掉这行，由服务端默认控制
-        extra_body={"enable_thinking": enable_thinking},
-    ):
+        "extra_body": {"enable_thinking": enable_thinking},
+    }
+    if tools:
+        kwargs["tools"] = cast(Any, tools)
+
+    async for chunk in await client.chat.completions.create(**kwargs):
         if not chunk.choices:
             continue
         choice = chunk.choices[0]
@@ -490,6 +546,7 @@ async def model_call(state: AgentState, config) -> AgentState:
     cfg = config.get("configurable", {}) or {}
     provider = (cfg.get("provider") or "").strip().lower() or DEFAULT_PROVIDER
     api_key = (cfg.get("api_key") or "").strip() or None
+    meta = _runtime_meta(config)
 
     messages = convert_messages(_trim_history(state["messages"]), provider)
 
@@ -503,6 +560,13 @@ async def model_call(state: AgentState, config) -> AgentState:
     except Exception as e:
         # 只在这里报一次错（不再 raise，避免 app.py 里又报一遍重复的原始 HTML）
         writer({"type": "error", "content": f"模型调用失败：{format_llm_error(e)}"})
+        record_error(
+            task_id=meta["task_id"],
+            error_type=_classify_llm_error(e),
+            message=format_llm_error(e),
+            model=meta["model"],
+            provider=meta["provider"],
+        )
         return {"messages": []}
 
     # 空回答兜底：模型吐了思考却没产出任何 content、也没调工具（常见于思考过长被截断）
@@ -510,6 +574,13 @@ async def model_call(state: AgentState, config) -> AgentState:
         if finish_reason == "length":
             # 思考阶段就被长度截断，重试大概率还是超长，直接报错并给出建议
             writer({"type": "error", "content": "回答在思考阶段被截断（输出超长），请缩小问题范围后重试"})
+            record_error(
+                task_id=meta["task_id"],
+                error_type="truncated_output",
+                message="回答在思考阶段被截断（输出超长）",
+                model=meta["model"],
+                provider=meta["provider"],
+            )
             return {"messages": []}
         # 未被截断却空回答：重试一次，明确要求直接给出结论（openai 后端同时关掉思考）
         try:
@@ -527,6 +598,54 @@ async def model_call(state: AgentState, config) -> AgentState:
         if not content.strip() and not tool_calls:
             content = "抱歉，本次没有生成有效回答，请换一种更具体或更小的问法再试一次。"
             writer({"type": "content", "content": content})
+            record_error(
+                task_id=meta["task_id"],
+                error_type="empty_answer",
+                message="重试后仍无有效回答",
+                retry_count=1,
+                model=meta["model"],
+                provider=meta["provider"],
+            )
+
+    # 空参工具调用兜底：模型要调工具却漏传必填参数（小模型 / 思考模式常见），
+    # 关掉思考重试一次并点名缺了哪些参数，避免空参调用打进工具节点再靠 hint 纠错。
+    missing = [(tc, _missing_required_args(tc)) for tc in tool_calls]
+    missing = [(tc, m) for tc, m in missing if m]
+    if missing:
+        detail = "；".join(f"{tc['name']} 缺 {', '.join(m)}" for tc, m in missing)
+        for tc, m in missing:
+            record_error(
+                task_id=meta["task_id"],
+                error_type="missing_required_argument",
+                tool=tc.get("name"),
+                arguments=tc.get("args") or {},
+                message=f"缺少必填参数: {', '.join(m)}",
+                retry_count=1,
+                model=meta["model"],
+                provider=meta["provider"],
+            )
+        try:
+            retry_messages = [
+                *messages,
+                {
+                    "role": "user",
+                    "content": (
+                        f"你刚才发起的工具调用缺少必填参数（{detail}）。"
+                        "请按工具定义补全参数后重新调用；若不知道参数内容，"
+                        "直接告诉我你需要什么信息，不要重复发起空参数调用。"
+                    ),
+                },
+            ]
+            if provider == "openai":
+                thinking, content, tool_calls, finish_reason = await _stream_openai(
+                    client, OPENAI_MODEL, retry_messages, writer, enable_thinking=False
+                )
+            else:
+                thinking, content, tool_calls, finish_reason = await _stream_ollama(
+                    client, OLLAMA_MODEL, retry_messages, writer
+                )
+        except Exception:
+            pass
 
     ai_msg = AIMessage(
         content=content,
@@ -552,10 +671,11 @@ def _current_tool_rounds(messages: Sequence[BaseMessage]) -> int:
     return rounds
 
 
-def _count_repeated_empty(messages: Sequence[BaseMessage], name: str, args: dict) -> int:
-    """统计本轮对话里，同一工具以相同空参数被调用的次数（含当前这次）。
+def _count_identical_calls(messages: Sequence[BaseMessage], name: str, args: dict) -> int:
+    """统计本轮对话里，同一工具以完全相同参数被调用的次数（含当前这次）。
 
-    用于打破「模型反复空参调用 → 报错 → 再空参」的死循环，避免烧光 MAX_TOOL_ROUNDS。
+    用于打破「模型反复用相同参数调用同一工具 → 得到相同结果 → 再调用」的死循环，
+    避免烧光 MAX_TOOL_ROUNDS。
     """
     count = 0
     for m in reversed(messages):
@@ -568,12 +688,37 @@ def _count_repeated_empty(messages: Sequence[BaseMessage], name: str, args: dict
     return count
 
 
-def should_continue(state: AgentState) -> str:
-    """路由：模型要调工具则去 tools 节点，否则结束；达到循环上限则强制结束。"""
+def _required_args(tool) -> list[str]:
+    """从工具的 args_schema 推导必填参数名（无 schema 或无需必填时返回空列表）。"""
+    schema = getattr(tool, "args_schema", None)
+    if schema is None:
+        return []
+    return [name for name, f in schema.model_fields.items() if f.is_required()]
+
+
+def _missing_required_args(tc: dict) -> list[str]:
+    """工具调用漏传的必填参数名；工具未知或参数齐全时返回空列表。"""
+    fn = TOOL_MAP.get(tc.get("name"))
+    if fn is None:
+        return []
+    provided = tc.get("args") or {}
+    return [p for p in _required_args(fn) if not provided.get(p)]
+
+
+def should_continue(state: AgentState, config) -> str:
+    """路由：模型要调工具则去 tools 节点，否则结束；达到循环上限则转收尾节点。"""
     last = state["messages"][-1]
     if isinstance(last, AIMessage) and getattr(last, "tool_calls", None):
         if _current_tool_rounds(state["messages"]) >= MAX_TOOL_ROUNDS:
-            return "end"
+            meta = _runtime_meta(config)
+            record_error(
+                task_id=meta["task_id"],
+                error_type="max_rounds_exceeded",
+                message=f"单轮工具调用达到上限 {MAX_TOOL_ROUNDS} 次，转收尾节点生成最终回答",
+                model=meta["model"],
+                provider=meta["provider"],
+            )
+            return "finalize"
         return "tools"
     return "end"
 
@@ -590,7 +735,7 @@ def _truncate_for_display(text: str, limit: int = 4000) -> str:
     return text[:limit] + "\n…(结果过长，已截断)"
 
 
-async def call_tools(state: AgentState) -> AgentState:
+async def call_tools(state: AgentState, config) -> AgentState:
     """工具节点：执行模型请求的工具调用，把结果作为 ToolMessage 回填。
 
     推送两类结构化事件，供前端拆分「调用 / 代码 / 结果」：
@@ -599,6 +744,7 @@ async def call_tools(state: AgentState) -> AgentState:
     图表工具额外推 chart 事件（图片 URL）。
     """
     writer = get_stream_writer()
+    meta = _runtime_meta(config)
     last = state["messages"][-1]
 
     new_messages = []
@@ -623,16 +769,33 @@ async def call_tools(state: AgentState) -> AgentState:
                     "error": True,
                 }
             )
+            record_error(
+                task_id=meta["task_id"],
+                error_type="unknown_tool",
+                tool=tc["name"],
+                arguments=tc.get("args") or {},
+                model=meta["model"],
+                provider=meta["provider"],
+            )
             continue
 
         args = tc.get("args") or {}
-        # 空参重复守卫：同一工具以空参被反复调用时，跳过执行并注入纠正提示，
-        # 避免模型空参死循环、烧光 MAX_TOOL_ROUNDS。
-        if not args and _count_repeated_empty(state["messages"], tc["name"], args) >= 2:
-            hint = (
-                f"你已多次以空参数调用 {tc['name']}，均被拒绝，请停止重复。"
-                f"补全该工具所需的必填参数后再重试。"
-            )
+        # 重复调用守卫：同一工具以完全相同参数（空参或非空参）被反复调用时，
+        # 跳过执行并注入纠正提示，避免模型拿相同参数反复调用陷入死循环、烧光 MAX_TOOL_ROUNDS。
+        repeated = _count_identical_calls(state["messages"], tc["name"], args)
+        if repeated >= 2:
+            if not args:
+                missing = _missing_required_args(tc) or ["参数"]
+                hint = (
+                    f"你已多次以空参数调用 {tc['name']}，均被拒绝，请停止重复。"
+                    f"该工具缺少必填参数：{', '.join(missing)}。请补全后重试；"
+                    f"如果不知道填什么，停止调用工具，直接告诉我你需要什么信息。"
+                )
+            else:
+                hint = (
+                    f"你已经用完全相同的参数调用 {tc['name']} 多次，结果不会改变，请停止重复。"
+                    f"要么换不同参数重试，要么基于已拿到结果直接给出最终回答，不要再调用该工具。"
+                )
             new_messages.append(
                 ToolMessage(content=hint, tool_call_id=tc["id"], name=tc["name"])
             )
@@ -644,10 +807,50 @@ async def call_tools(state: AgentState) -> AgentState:
                     "error": True,
                 }
             )
+            record_error(
+                task_id=meta["task_id"],
+                error_type="tool_loop",
+                tool=tc["name"],
+                arguments=args,
+                message=f"反复以相同参数调用（第 {repeated} 次）",
+                retry_count=repeated,
+                model=meta["model"],
+                provider=meta["provider"],
+            )
             continue
 
         try:
             result = await fn.ainvoke(tc["args"])
+        except ValidationError as e:
+            # 模型漏传必填参数：把 Pydantic 原始报错翻译成一句能直接照做的中文提示，
+            # 列明缺的是哪个参数，而不是喂回 "Field required [type=missing ...]"。
+            missing = [str(err["loc"][0]) for err in e.errors() if err.get("type") == "missing"]
+            result = (
+                f"工具 {tc['name']} 缺少必填参数: {', '.join(missing)}，请补全后重试。"
+                if missing
+                else f"工具 {tc['name']} 参数校验失败: {e}"
+            )
+            new_messages.append(
+                ToolMessage(content=result, tool_call_id=tc["id"], name=tc["name"])
+            )
+            writer(
+                {
+                    "type": "tool_result",
+                    "name": tc["name"],
+                    "content": result,
+                    "error": True,
+                }
+            )
+            record_error(
+                task_id=meta["task_id"],
+                error_type="missing_required_argument",
+                tool=tc["name"],
+                arguments=tc.get("args") or {},
+                message=f"缺少必填参数: {', '.join(missing) or str(e)}",
+                model=meta["model"],
+                provider=meta["provider"],
+            )
+            continue
         except Exception as e:
             result = f"工具执行失败: {e}"
             new_messages.append(
@@ -661,7 +864,29 @@ async def call_tools(state: AgentState) -> AgentState:
                     "error": True,
                 }
             )
+            record_error(
+                task_id=meta["task_id"],
+                error_type="tool_exception",
+                tool=tc["name"],
+                arguments=tc.get("args") or {},
+                message=str(e),
+                model=meta["model"],
+                provider=meta["provider"],
+            )
             continue
+
+        # 工具返回了 "Database error:" 前缀却没抛异常（只读 SELECT 拦截 / SQL 错误 / 连接失败），
+        # 这些是执行期错误，单独归类记录。
+        if isinstance(result, str) and result.startswith("Database error:"):
+            record_error(
+                task_id=meta["task_id"],
+                error_type="readonly_violation" if "只允许 SELECT" in result else "tool_exception",
+                tool=tc["name"],
+                arguments=tc.get("args") or {},
+                message=result,
+                model=meta["model"],
+                provider=meta["provider"],
+            )
 
         # 图表工具返回 {"image": url, ...} → 额外推一个 chart 事件给前端渲染图片
         if isinstance(result, dict) and result.get("image"):
@@ -694,6 +919,58 @@ async def call_tools(state: AgentState) -> AgentState:
     return {"messages": new_messages}
 
 
+async def finalize(state: AgentState, config) -> AgentState:
+    """收尾节点：工具调用达到上限后，强制模型基于已有结果给出最终回答。
+
+    不下发任何工具（tools=[]），模型只能产出文本，从根上打破工具死循环；
+    若模型仍不产出有效文本，兜底给出一句提示，保证不会「无回答直接结束」。
+    """
+    writer = get_stream_writer()
+    cfg = config.get("configurable", {}) or {}
+    provider = (cfg.get("provider") or "").strip().lower() or DEFAULT_PROVIDER
+    api_key = (cfg.get("api_key") or "").strip() or None
+
+    messages = convert_messages(_trim_history(state["messages"]), provider)
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "你已经调用了太多次工具，请立即停止调用任何工具，"
+                "直接基于已经拿到的数据，用中文给出最终结论。"
+            ),
+        }
+    )
+
+    thinking = ""
+    content = ""
+    try:
+        if provider == "openai":
+            client = _get_openai_client(api_key)
+            thinking, content, _tool_calls, _ = await _stream_openai(
+                client, OPENAI_MODEL, messages, writer, enable_thinking=False, tools=[]
+            )
+        else:
+            client = _get_ollama_client()
+            thinking, content, _tool_calls, _ = await _stream_ollama(
+                client, OLLAMA_MODEL, messages, writer, tools=[]
+            )
+    except Exception:
+        pass
+
+    if not content.strip():
+        content = "已执行多次查询但未能得出最终结论，请缩小问题范围或换一种更具体的问法后重试。"
+        writer({"type": "content", "content": content})
+
+    return {
+        "messages": [
+            AIMessage(
+                content=content,
+                additional_kwargs={"reasoning_content": thinking} if thinking else {},
+            )
+        ]
+    }
+
+
 # ============================================================
 # 建图
 # ============================================================
@@ -706,13 +983,15 @@ def build_agent(checkpointer) -> Runnable:
     graph = StateGraph(AgentState)
     graph.add_node("model", model_call)
     graph.add_node("tools", call_tools)
+    graph.add_node("finalize", finalize)
     graph.set_entry_point("model")
     graph.add_conditional_edges(
         "model",
         should_continue,
-        {"tools": "tools", "end": END},
+        {"tools": "tools", "finalize": "finalize", "end": END},
     )
     graph.add_edge("tools", "model")
+    graph.add_edge("finalize", END)
     return graph.compile(checkpointer=checkpointer)
 
 
