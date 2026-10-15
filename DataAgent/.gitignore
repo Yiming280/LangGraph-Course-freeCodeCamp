@@ -3,8 +3,12 @@ agent_memory.sqlite
 agent_graph.png
 error_log.jsonl
 static/charts/
+static/reports/
 databases.json
 settings.json
+static/*.json
+reports
+API.md
 
 # Python
 __pycache__/
