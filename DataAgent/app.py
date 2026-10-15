@@ -16,7 +16,7 @@ from typing import cast
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -26,6 +26,8 @@ import memory as mem
 from error_taxonomy import LOG_FILE, aggregate
 from agent import (
     DEFAULT_PROVIDER,
+    MAX_HISTORY_CHARS,
+    MAX_MESSAGES,
     available_models,
     build_agent,
     build_system_prompt,
@@ -53,6 +55,7 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+REPORTS_DIR = STATIC_DIR / "reports"
 MEMORY_DB = BASE_DIR / "agent_memory.sqlite"
 
 # session_id -> asyncio.Event：前端点「停止生成」时置位，用于取消该会话的流
@@ -300,6 +303,41 @@ async def export_memory_file():
     )
 
 
+@app.post("/export-report")
+async def export_report_button(request: Request):
+    """前端「生成报告」按钮：把当前会话（问/答 + 图表）直接导出为文档，秒回。
+
+    不经过 LLM，确定性生成。body: {"session_id", "format": "md"|"pdf", "title"?}
+    """
+    from tools.export_report import export_conversation_report
+
+    body = await request.json()
+    session_id = (body.get("session_id") or "").strip() or "default"
+    fmt = (body.get("format") or "pdf").strip().lower()
+    title = (body.get("title") or "").strip()
+
+    messages = mem.get_full_session(str(MEMORY_DB), session_id)
+    if not messages:
+        return {"ok": False, "error": "当前会话还没有内容，请先提问再生成报告"}
+
+    try:
+        result = export_conversation_report(messages, title=title, format=fmt)
+    except Exception as e:
+        return {"ok": False, "error": f"生成报告失败: {e}"}
+    return {"ok": True, **result}
+
+
+@app.get("/reports/{filename}")
+async def download_report(filename: str):
+    """下载导出的报告（PDF / Markdown），强制作为附件下载。"""
+    name = Path(filename).name  # 只取文件名，防路径穿越
+    path = REPORTS_DIR / name
+    if not path.is_file():
+        return Response("报告不存在", status_code=404)
+    media = "application/pdf" if path.suffix == ".pdf" else "text/markdown; charset=utf-8"
+    return FileResponse(path, media_type=media, filename=name)
+
+
 @app.post("/memory/import")
 async def import_memory_file(request: Request):
     """接收 JSON 知识库（body 直接是导出的那份 JSON），写回 checkpointer。
@@ -314,6 +352,51 @@ async def import_memory_file(request: Request):
         return {"ok": False, "error": "文件格式不匹配（应为 dataagent-memory 导出文件）"}
     count = await mem.import_memory(app.state.checkpointer, data)
     return {"ok": True, "imported_sessions": count}
+
+
+@app.get("/sessions")
+async def list_sessions():
+    """列出所有历史会话（id / 标题 / 预览 / 更新时间 / 消息数），按更新时间倒序。"""
+    return {"sessions": mem.list_sessions(str(MEMORY_DB))}
+
+
+@app.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, before: int | None = None, limit: int = 20):
+    """分页读取某个会话的消息（由新到旧）。
+
+    before：游标 = 已加载的最早消息索引，省略则取最新一段；
+    limit：每页条数（前端向上滚动时用更小的 before 取更早一段）。
+    """
+    limit = max(1, min(limit, 100))
+    data = mem.get_session_messages(str(MEMORY_DB), session_id, before, limit)
+    if data is None:
+        return {"ok": False, "error": "会话不存在"}
+    return {"ok": True, "session_id": session_id, **data}
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """删除一个历史会话（清空其全部 checkpoint 与写入）。"""
+    ok = await mem.delete_session(app.state.checkpointer, session_id)
+    if not ok:
+        return {"ok": False, "error": "会话不存在"}
+    return {"ok": True, "deleted": session_id}
+
+
+@app.get("/context")
+async def context_usage(session_id: str):
+    """当前会话的上下文占用（消息数 / 历史字符数 / 上限），供前端「快超限」提示。"""
+    cp = await app.state.checkpointer.aget({"configurable": {"thread_id": session_id}})
+    msgs = cp.get("channel_values", {}).get("messages", []) if cp else []
+    chat_msgs = [m for m in msgs if not isinstance(m, SystemMessage)]
+    # 与 agent._trim_history 同口径估算：每条消息按 len(content)+200 计
+    chars = sum(len(str(m.content)) + 200 for m in chat_msgs)
+    return {
+        "message_count": len(chat_msgs),
+        "max_messages": MAX_MESSAGES,
+        "history_chars": chars,
+        "max_history_chars": MAX_HISTORY_CHARS,
+    }
 
 
 @app.get("/errors/stats")
