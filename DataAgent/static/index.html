@@ -679,6 +679,89 @@
         .db-test-result { font-size: 0.8rem; margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
         .db-test-result.ok { color: #4ade80; }
         .db-test-result.err { color: #f87171; }
+
+        /* ---- 历史会话侧栏 ---- */
+        .hist-backdrop {
+            position: fixed; inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            display: none;
+        }
+        .hist-backdrop.show { display: block; }
+        .hist-sidebar {
+            position: fixed; left: 0; top: 0;
+            height: 100vh; width: 420px; max-width: 92vw;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            z-index: 1001;
+            display: flex; flex-direction: column;
+            transform: translateX(-100%);
+            transition: transform 0.25s ease;
+        }
+        .hist-sidebar.show { transform: translateX(0); }
+        .hist-head {
+            display: flex; align-items: center; gap: 8px;
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .hist-head h2 { font-size: 0.95rem; font-weight: 600; flex: 1; }
+        .hist-head button {
+            background: var(--surface2); color: var(--text);
+            border: 1px solid var(--border); border-radius: 8px;
+            padding: 4px 10px; font-size: 0.8rem; cursor: pointer; flex-shrink: 0;
+        }
+        .hist-head button:hover { border-color: var(--accent); color: var(--accent); }
+        .hist-list {
+            flex: 1; overflow-y: auto; padding: 10px;
+            display: flex; flex-direction: column; gap: 6px;
+        }
+        .hist-list::-webkit-scrollbar { width: 6px; }
+        .hist-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        .hist-item {
+            border: 1px solid var(--border); border-radius: 10px;
+            padding: 10px 12px; background: rgba(0, 0, 0, 0.15);
+            cursor: pointer; display: flex; flex-direction: column; gap: 3px;
+        }
+        .hist-item:hover { border-color: var(--accent); }
+        .hist-item.active { border-color: var(--accent); background: rgba(0, 0, 0, 0.25); }
+        .hist-item-head { display: flex; align-items: center; gap: 8px; }
+        .hist-title {
+            font-weight: 600; font-size: 0.85rem; flex: 1; min-width: 0;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .hist-del {
+            background: none; border: none; color: var(--text-dim);
+            font-size: 0.85rem; cursor: pointer; padding: 2px 5px; border-radius: 6px;
+        }
+        .hist-del:hover { color: #f87171; background: var(--surface2); }
+        .hist-meta {
+            font-size: 0.72rem; color: var(--text-dim);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .hist-time { font-size: 0.68rem; color: var(--text-dim); opacity: 0.8; }
+        .hist-empty { text-align: center; color: var(--text-dim); padding: 16px; font-size: 0.8rem; }
+        .hist-detail { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+        .hist-messages {
+            flex: 1; overflow-y: auto; padding: 16px;
+            display: flex; flex-direction: column; gap: 14px;
+        }
+        .hist-messages::-webkit-scrollbar { width: 6px; }
+        .hist-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        .hist-loading {
+            text-align: center; color: var(--text-dim);
+            padding: 6px; font-size: 0.72rem; flex-shrink: 0;
+        }
+        .context-warn {
+            margin: 0 20px 12px;
+            padding: 8px 12px;
+            border: 1px solid rgba(233, 69, 96, 0.45);
+            background: rgba(233, 69, 96, 0.10);
+            color: #f87171;
+            border-radius: 8px;
+            font-size: 0.78rem;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
@@ -692,9 +775,11 @@
             </select>
             <input id="apiKey" class="api-key-input" type="password" placeholder="API Key（可选）"
                 title="留空使用服务器默认 Key" autocomplete="off">
+            <button class="new-chat-btn" onclick="toggleHistSidebar()">🕘 历史会话</button>
             <button class="new-chat-btn" onclick="openMemModal()">💾 记忆</button>
             <button class="new-chat-btn" onclick="openDbModal()">⚙️ 连接配置</button>
             <button class="new-chat-btn" onclick="openErrModal()">📊 错误统计</button>
+            <button class="new-chat-btn" id="reportBtn" onclick="exportReport()">📄 生成报告</button>
             <button class="new-chat-btn" onclick="newChat()">＋ 新会话</button>
         </header>
 
@@ -706,7 +791,26 @@
                 oninput="this.style.height='';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
             <button id="sendBtn" onclick="onSend()">发送</button>
         </footer>
+        <div id="contextWarn" class="context-warn" style="display:none"></div>
     </div>
+
+    <!-- 历史会话侧栏 -->
+    <div class="hist-backdrop" id="histBackdrop" onclick="closeHistSidebar()"></div>
+    <aside class="hist-sidebar" id="histSidebar">
+        <div class="hist-head">
+            <button id="histBackBtn" onclick="showHistList()" style="display:none">← 返回</button>
+            <h2 id="histTitle">🕘 历史会话</h2>
+            <button onclick="loadSessions()" title="刷新">⟳</button>
+            <button onclick="closeHistSidebar()">✕</button>
+        </div>
+        <div class="hist-list" id="histList">
+            <div class="hist-empty">加载中…</div>
+        </div>
+        <div class="hist-detail" id="histDetail" style="display:none">
+            <div class="hist-messages" id="histMessages"></div>
+            <div class="hist-loading" id="histLoading" style="display:none">正在加载更早的对话…</div>
+        </div>
+    </aside>
 
     <!-- 图片预览 -->
     <div class="lightbox" id="lightbox" onclick="this.style.display='none'">
@@ -1413,6 +1517,37 @@
             localStorage.setItem(SESSION_KEY, sessionId);
             messagesEl.innerHTML = '';
             inputEl.focus();
+            updateContextWarn();
+        }
+
+        /** 「生成报告」按钮：直接调用后端把当前会话导出成文档（不经过 LLM，秒回） */
+        async function exportReport() {
+            if (isStreaming) return;
+            const btn = document.getElementById('reportBtn');
+            btn.disabled = true;
+            const original = btn.textContent;
+            btn.textContent = '⏳ 生成中…';
+
+            const bubble = createBotBubble();
+            try {
+                const resp = await fetch('/export-report', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sessionId, format: 'pdf' }),
+                });
+                const data = await resp.json();
+                if (data.ok) {
+                    appendAnswer(bubble, `已生成报告：${data.summary}\n\n[点击下载报告](${data.url})`);
+                } else {
+                    appendAnswer(bubble, `❌ ${data.error || '生成报告失败'}`);
+                }
+            } catch (err) {
+                appendAnswer(bubble, `❌ 生成报告失败: ${err.message}`);
+            } finally {
+                finalizeBotBubble(bubble);
+                btn.disabled = false;
+                btn.textContent = original;
+            }
         }
 
         // ============ 渲染函数 ============
@@ -1868,6 +2003,7 @@
                                     // 流结束
                                     finalizeBotBubble(currentBotBubble);
                                     currentBotBubble = null;
+                                    updateContextWarn();
                                 } else if (payload.type === 'thinking') {
                                     // 思考过程 → 折叠块
                                     appendThinking(currentBotBubble, payload.content);
@@ -1942,6 +2078,291 @@
             inputEl.focus();
         }
 
+        // ============ 历史会话侧栏 ============
+        const histSidebar = document.getElementById('histSidebar');
+        const histBackdrop = document.getElementById('histBackdrop');
+        const histListEl = document.getElementById('histList');
+        const histDetailEl = document.getElementById('histDetail');
+        const histMessagesEl = document.getElementById('histMessages');
+        const histLoadingEl = document.getElementById('histLoading');
+        const histTitleEl = document.getElementById('histTitle');
+        const histBackBtn = document.getElementById('histBackBtn');
+        const HIST_PAGE = 20;
+        let histThread = null;      // 当前查看的 thread_id
+        let histCursor = 0;         // 已加载的最早消息索引（下一次「加载更早」的 before）
+        let histHasMore = false;
+        let histLoadingMore = false;
+
+        function openHistSidebar() {
+            showHistList();
+            histSidebar.classList.add('show');
+            histBackdrop.classList.add('show');
+            loadSessions();
+        }
+
+        function closeHistSidebar() {
+            histSidebar.classList.remove('show');
+            histBackdrop.classList.remove('show');
+        }
+
+        function toggleHistSidebar() {
+            if (histSidebar.classList.contains('show')) closeHistSidebar();
+            else openHistSidebar();
+        }
+
+        function showHistList() {
+            histDetailEl.style.display = 'none';
+            histListEl.style.display = 'flex';
+            histBackBtn.style.display = 'none';
+            histTitleEl.textContent = '🕘 历史会话';
+            histThread = null;
+        }
+
+        async function loadSessions() {
+            histListEl.innerHTML = '<div class="hist-empty">加载中…</div>';
+            try {
+                const res = await fetch('/sessions');
+                const data = await res.json();
+                const sessions = data.sessions || [];
+                if (!sessions.length) {
+                    histListEl.innerHTML = '<div class="hist-empty">暂无历史会话</div>';
+                    return;
+                }
+                histListEl.innerHTML = sessions.map(s => `
+                    <div class="hist-item" data-tid="${escapeHtml(s.id)}">
+                        <div class="hist-item-head">
+                            <div class="hist-title">${escapeHtml(s.title || '（无文字）')}</div>
+                            <button class="hist-del" data-tid="${escapeHtml(s.id)}" title="删除会话">🗑</button>
+                        </div>
+                        <div class="hist-meta">${escapeHtml(s.preview || '')}</div>
+                        <div class="hist-time">${escapeHtml(relativeTime(s.updated_at))} · ${s.message_count} 条</div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                histListEl.innerHTML = '<div class="hist-empty">加载失败: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        histListEl.addEventListener('click', (e) => {
+            const del = e.target.closest('.hist-del');
+            if (del) { deleteHistSession(del.dataset.tid); return; }
+            const item = e.target.closest('.hist-item');
+            if (item) openHistSession(item.dataset.tid, item);
+        });
+
+        async function deleteHistSession(tid) {
+            if (!confirm('删除这个历史会话？此操作不可恢复。')) return;
+            try {
+                const res = await fetch('/sessions/' + encodeURIComponent(tid), { method: 'DELETE' });
+                const data = await res.json();
+                if (data.ok) {
+                    if (histThread === tid) showHistList();
+                    loadSessions();
+                }
+            } catch (e) { /* 忽略 */ }
+        }
+
+        async function openHistSession(tid, itemEl) {
+            document.querySelectorAll('.hist-item').forEach(el => el.classList.remove('active'));
+            if (itemEl) itemEl.classList.add('active');
+            histThread = tid;
+            histCursor = 0;
+            histHasMore = false;
+            histListEl.style.display = 'none';
+            histDetailEl.style.display = 'flex';
+            histBackBtn.style.display = 'inline-block';
+            histTitleEl.textContent = '历史对话';
+            histMessagesEl.innerHTML = '<div class="hist-empty">加载中…</div>';
+            try {
+                const res = await fetch(`/sessions/${encodeURIComponent(tid)}/messages?limit=${HIST_PAGE}`);
+                const data = await res.json();
+                if (!data.ok) {
+                    histMessagesEl.innerHTML = '<div class="hist-empty">' + escapeHtml(data.error || '会话不存在') + '</div>';
+                    return;
+                }
+                histMessagesEl.innerHTML = '';
+                if (data.messages && data.messages.length) {
+                    histMessagesEl.appendChild(renderHistMessages(data.messages));
+                } else {
+                    histMessagesEl.innerHTML = '<div class="hist-empty">（无消息）</div>';
+                }
+                histCursor = data.before || 0;
+                histHasMore = !!data.has_more;
+                histMessagesEl.scrollTop = histMessagesEl.scrollHeight;
+            } catch (e) {
+                histMessagesEl.innerHTML = '<div class="hist-empty">加载失败: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        // 向上滚动到顶部时，加载更早一段对话
+        histMessagesEl.addEventListener('scroll', () => {
+            if (histMessagesEl.scrollTop <= 40 && histHasMore && !histLoadingMore) {
+                loadHistOlder();
+            }
+        });
+
+        async function loadHistOlder() {
+            if (!histThread || histLoadingMore) return;
+            histLoadingMore = true;
+            histLoadingEl.style.display = 'block';
+            const prevHeight = histMessagesEl.scrollHeight;
+            const prevTop = histMessagesEl.scrollTop;
+            try {
+                const res = await fetch(`/sessions/${encodeURIComponent(histThread)}/messages?before=${histCursor}&limit=${HIST_PAGE}`);
+                const data = await res.json();
+                if (data.ok && data.messages && data.messages.length) {
+                    const frag = renderHistMessages(data.messages);
+                    histMessagesEl.insertBefore(frag, histMessagesEl.firstChild);
+                    histCursor = data.before || 0;
+                    histHasMore = !!data.has_more;
+                    // 保持视口位置：把新增高度补偿回 scrollTop
+                    histMessagesEl.scrollTop = prevTop + (histMessagesEl.scrollHeight - prevHeight);
+                }
+            } catch (e) { /* 忽略，允许重试 */ }
+            finally {
+                histLoadingMore = false;
+                histLoadingEl.style.display = 'none';
+            }
+        }
+
+        /** 静态渲染一段消息（按时间正序），返回 DocumentFragment。 */
+        function renderHistMessages(msgs) {
+            const frag = document.createDocumentFragment();
+            let bot = null;
+            for (const m of msgs) {
+                if (m.role === 'human') {
+                    frag.appendChild(renderHistUser(m.content));
+                    bot = null;
+                } else if (m.role === 'ai') {
+                    bot = renderHistBot(m.content, m.tool_calls || []);
+                    frag.appendChild(bot.msg);
+                } else if (m.role === 'tool') {
+                    if (bot) attachHistToolResult(bot, m);
+                    else frag.appendChild(renderHistToolFallback(m));
+                }
+            }
+            return frag;
+        }
+
+        function renderHistUser(content) {
+            const div = document.createElement('div');
+            div.className = 'msg user';
+            div.innerHTML = `<div class="avatar">U</div><div class="bubble">${escapeHtml(content || '')}</div>`;
+            return div;
+        }
+
+        function renderHistBot(content, toolCalls) {
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            const items = new Map();
+            if (toolCalls && toolCalls.length) {
+                const details = document.createElement('details');
+                details.className = 'tools-block';
+                const summary = document.createElement('summary');
+                summary.textContent = '🔧 工具调用';
+                const body = document.createElement('div');
+                body.className = 'tools-body';
+                details.appendChild(summary);
+                details.appendChild(body);
+                bubble.appendChild(details);
+                for (const tc of toolCalls) {
+                    const item = document.createElement('details');
+                    item.className = 'tool-item';
+                    const s = document.createElement('summary');
+                    s.textContent = '🔧 ' + (tc.name || '工具');
+                    const tb = document.createElement('div');
+                    tb.className = 'tool-body';
+                    const code = extractToolCode(tc.args);
+                    if (code) {
+                        const label = document.createElement('span');
+                        label.className = 'tool-code-label';
+                        label.textContent = '代码 / 入参';
+                        const pre = document.createElement('pre');
+                        pre.className = 'tool-code';
+                        pre.textContent = code;
+                        tb.appendChild(label);
+                        tb.appendChild(pre);
+                    }
+                    item.appendChild(s);
+                    item.appendChild(tb);
+                    body.appendChild(item);
+                    items.set(tc.id, tb);
+                }
+            }
+            if (content) {
+                const ans = document.createElement('div');
+                ans.className = 'answer-area';
+                ans.innerHTML = renderMarkdown(content);
+                bubble.appendChild(ans);
+            }
+            const msg = document.createElement('div');
+            msg.className = 'msg bot';
+            msg.innerHTML = '<div class="avatar">AI</div>';
+            msg.appendChild(bubble);
+            return { msg, items };
+        }
+
+        function attachHistToolResult(bot, m) {
+            const tb = bot.items.get(m.tool_call_id);
+            if (!tb || m.content == null || m.content === '') return;
+            const label = document.createElement('span');
+            label.className = 'tool-result-label';
+            label.textContent = '执行结果';
+            const pre = document.createElement('pre');
+            pre.className = 'tool-result';
+            pre.textContent = m.content;
+            tb.appendChild(label);
+            tb.appendChild(pre);
+        }
+
+        function renderHistToolFallback(m) {
+            const div = document.createElement('div');
+            div.className = 'msg bot';
+            div.innerHTML = `<div class="avatar">AI</div><div class="bubble">${escapeHtml(m.content || '')}</div>`;
+            return div;
+        }
+
+        function relativeTime(iso) {
+            if (!iso) return '';
+            const t = new Date(iso).getTime();
+            if (isNaN(t)) return '';
+            const diff = Date.now() - t;
+            const min = Math.floor(diff / 60000);
+            if (min < 1) return '刚刚';
+            if (min < 60) return min + ' 分钟前';
+            const hr = Math.floor(min / 60);
+            if (hr < 24) return hr + ' 小时前';
+            const day = Math.floor(hr / 24);
+            if (day < 30) return day + ' 天前';
+            const d = new Date(t);
+            return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+        }
+
+        // ============ 上下文占用提示 ============
+        async function updateContextWarn() {
+            const el = document.getElementById('contextWarn');
+            try {
+                const res = await fetch('/context?session_id=' + encodeURIComponent(sessionId));
+                const d = await res.json();
+                const n = d.message_count || 0;
+                const max = d.max_messages || 30;
+                const chars = d.history_chars || 0;
+                const maxChars = d.max_history_chars || 40000;
+                let msg = '';
+                if (n >= max) {
+                    msg = '⚠️ 本会话已达上下文上限（' + n + '/' + max + ' 条），最早的对话已不再被模型记住，建议「＋ 新会话」。';
+                } else if (n >= Math.floor(max * 0.8)) {
+                    msg = '⚠️ 本会话接近上下文上限（' + n + '/' + max + ' 条），更早的对话即将被遗忘，建议「＋ 新会话」。';
+                } else if (chars >= Math.floor(maxChars * 0.8)) {
+                    msg = '⚠️ 历史上下文较大（约 ' + Math.round(chars / 1000) + 'k / ' + Math.round(maxChars / 1000) + 'k 字符），可能很快触发裁剪。';
+                }
+                el.style.display = msg ? 'block' : 'none';
+                el.textContent = msg;
+            } catch (e) {
+                el.style.display = 'none';
+            }
+        }
+
         // ============ 键盘事件 ============
 
         inputEl.addEventListener('keydown', (e) => {
@@ -1953,6 +2374,7 @@
 
         // 页面加载后：拉取可用模型 + 聚焦输入框
         loadModels();
+        updateContextWarn();
         inputEl.focus();
     </script>
 </body>
