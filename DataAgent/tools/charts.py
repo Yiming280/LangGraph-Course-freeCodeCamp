@@ -1,7 +1,7 @@
-"""统计图工具：生成 histogram / bar / pie 图表 PNG。
+"""统计图工具：生成 histogram / bar / pie / line 图表 PNG。
 
 设计遵循 dataviz 规范（已验证浅色 palette）：
-  - bar 用 categorical slot1 蓝 #2a78d6
+  - bar / line 用 categorical slot1 蓝 #2a78d6
   - histogram 用同色系单色蓝（sequential）
   - pie 用固定顺序的 categorical 槽位，超过 8 类折叠为"其他"
   - 轴/标签用次级墨色，网格用发丝线
@@ -56,6 +56,7 @@ SURFACE = "#ffffff"
 # 数据量上限（防模型传超大数组拖垮服务）
 MAX_BAR_PIE = 200
 MAX_HIST = 5000
+MAX_LINE = 2000
 
 CHARTS_DIR = Path(__file__).resolve().parents[1] / "static" / "charts"
 
@@ -259,6 +260,73 @@ def create_histogram(data: str, bins: int = 20, title: str = "", x_label: str = 
     ax.spines[["left", "bottom"]].set_color(INK_MUTED)
     ax.grid(axis="y", color=GRIDLINE, linewidth=0.8, alpha=0.8)
     ax.set_axisbelow(True)
+
+    result = _render(fig, title)
+    result["count"] = len(values)
+    return result
+
+
+@tool
+def create_line_chart(
+    y: str,
+    x: str = "",
+    title: str = "",
+    x_label: str = "",
+    y_label: str = "",
+) -> dict[str, Any]:
+    """生成折线图（line chart）PNG。
+
+    适合"随时间/顺序变化"的趋势数据，如每日产量、按小时指标走势。
+    数据较多时请先在 SQL 里 GROUP BY 时间粒度 + ORDER BY 时间 LIMIT 500。
+
+    Args:
+        y: 数值数组的 JSON 字符串，如 '[10, 25, 18, 40]'。最多 2000 个点。
+        x: 横轴数组的 JSON 字符串，可选。传入 '["1月","2月",...]' 或
+           时间戳 '[2024-01-01, ...]'。为空时用 0,1,2... 作横轴。
+        title: 图表标题（中文）。
+        x_label: x 轴标签，可选。
+        y_label: y 轴标签，可选。
+    """
+    values = _tidy_hist(y)  # 复用：解析 JSON 数组 → 浮点，丢弃 NaN
+    if len(values) < 2:
+        raise ValueError("至少需要 2 个有效数值才能画折线图")
+    values = values[:MAX_LINE]
+
+    # 横轴：可选；为空则用索引，否则逐项解析为字符串/数值
+    xvals: list[Any]
+    if x:
+        try:
+            raw_x = json.loads(x) if isinstance(x, str) else x
+        except json.JSONDecodeError as e:
+            raise ValueError(f"x 不是合法的 JSON 数组字符串: {e}")
+        if not isinstance(raw_x, list) or len(raw_x) != len(values):
+            raise ValueError(f"x 必须是 JSON 数组且长度与 y 一致: {len(values)}")
+        xvals = [v if isinstance(v, str) else v for v in raw_x]
+    else:
+        xvals = list(range(len(values)))
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    # 点多时隐藏标记避免糊成一团
+    markersize = 4 if len(values) <= 60 else 0
+    ax.plot(
+        xvals,
+        values,
+        color=COLOR_BLUE,
+        linewidth=1.8,
+        marker="o" if markersize else None,
+        markersize=markersize,
+    )
+    ax.set_xlabel(x_label, color=INK_SECONDARY) if x_label else None
+    ax.set_ylabel(y_label, color=INK_SECONDARY) if y_label else None
+    ax.tick_params(colors=INK_SECONDARY)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.spines[["left", "bottom"]].set_color(INK_MUTED)
+    ax.grid(axis="y", color=GRIDLINE, linewidth=0.8, alpha=0.8)
+    ax.set_axisbelow(True)
+
+    # 横轴是字符串/日期时旋转防重叠
+    if any(isinstance(v, str) for v in xvals):
+        ax.tick_params(axis="x", rotation=45)
 
     result = _render(fig, title)
     result["count"] = len(values)
