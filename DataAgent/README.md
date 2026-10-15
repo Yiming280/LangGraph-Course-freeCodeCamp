@@ -1,32 +1,45 @@
 # Data Agent — 流式 Web 数据分析 Skeleton
 
-一个可扩展的 AI 数据分析 Agent：从 PostgreSQL 提取数据、生成统计图（histogram / bar / pie）、
-通过 SSE 流式输出，并用 SQLite 持久化记忆。**所有工具集中在 `tools/` 文件夹，agent 脚本只声明、不定义。**
+一个可扩展的 AI 数据分析 Agent：从 PostgreSQL / Apache IoTDB 提取数据、读本机日志、
+生成统计图（histogram / bar / pie / line），通过 SSE 流式输出，SQLite 持久化记忆，
+并支持把分析结果导出成 Markdown / PDF 报告。**所有工具集中在 `tools/` 文件夹，agent 脚本只声明、不定义。**
 
 ## 功能
 
 - 🖥️ **Web 界面 + SSE 流式**：思考过程、正式回答逐 token 输出，图表图片直接内嵌
-- 🗄️ **数据库提取**：只读 SELECT 查询 `agile_dispatch` 库，先探索 schema 再取数
-- 📊 **统计图**：柱状图 / 饼图 / 直方图，中文渲染（Noto Sans CJK）
-- 🧠 **持久化记忆**：SQLite checkpointer，跨轮 + 重启不丢，会话按 session_id 隔离
+- 🗄️ **多数据源**：只读 PostgreSQL（多库按别名）、Apache IoTDB 时序库、本机日志（白名单目录）
+- 📊 **统计图**：柱状图 / 饼图 / 直方图 / 折线图，中文渲染（Noto Sans CJK）
+- 📄 **报告导出**：把对话总结 + 图表导出成 Markdown / PDF（LLM 工具与后端按钮两个入口）
+- 🕘 **历史会话**：侧栏列出 / 分页回看 / 删除历史会话，附上下文占用提示
+- 📉 **错误统计**：结构化错误分类（Error Taxonomy）+ 前端占比看板
+- 🧠 **持久化记忆**：SQLite checkpointer，跨轮 + 重启不丢，会话按 session_id 隔离；支持记忆导出/导入
 - 🧩 **工具自动注册**：往 `tools/` 丢一个工具文件即自动可用，无需改 agent 脚本
 
 ## 目录结构
 
 ```
 DataAgent/
-├── app.py          # FastAPI + SSE 服务（web 入口）
+├── app.py          # FastAPI + SSE 服务（web 入口 + settings/memory/report/errors 端点）
 ├── agent.py        # LangGraph 图定义（节点 + 路由 + CLI 调试入口）
+├── memory.py       # 记忆导出/导入 + 会话列表/分页/删除
+├── error_taxonomy.py # 错误分类法（结构化错误记录 + 聚合统计）
 ├── tools/          # ★ 所有工具都在这里 —— 自动发现注册
-│   ├── __init__.py # 自动扫描收集 ALL_TOOLS / TOOL_MAP
-│   ├── database.py    # query_database（只读 SELECT）
-│   ├── charts.py      # create_histogram / create_bar_chart / create_pie_chart
+│   ├── __init__.py    # 自动扫描收集 ALL_TOOLS / TOOL_MAP
+│   ├── _settings.py   # 连接配置（数据库/IoTDB/日志，settings.json 落盘）
+│   ├── database.py    # query_database / list_databases / test_connection（只读）
+│   ├── describe_database.py # 一次返回某库全部表/列 schema 概览
+│   ├── charts.py      # create_histogram / bar / pie / line
+│   ├── iotdb.py       # Apache IoTDB 只读查询
+│   ├── log_fetch.py   # 本机日志读取/检索
+│   ├── supply_chain.py / gantt.py # 供料拓扑 / 甘特图
+│   ├── export_report.py # 报告导出（Markdown / PDF）
 │   └── code_runner.py # python_executor（沙箱执行 Python）
 ├── static/
-│   ├── index.html     # SSE 前端
-│   └── charts/        # 生成的图表 PNG（运行时产物）
+│   ├── index.html     # SSE 前端（历史侧栏 / 连接配置 / 报告 / 错误统计）
+│   ├── charts/        # 生成的图表 PNG（运行时产物）
+│   └── reports/       # 导出的报告（运行时产物）
 ├── requirements.txt
-└── .env.example    # OLLAMA_HOST / DB_* 配置模板
+└── .env.example    # LLM_PROVIDER / OLLAMA_* / OPENAI_* / DATABASES / IOTDB_* / LOG_DIR*
 ```
 
 ## 快速开始
@@ -58,6 +71,8 @@ sudo kill [PID]
 - 「分析 t_device_statistical_metrics 表，画个柱状图看各字段概况」
 - 「t_vehicles 表里按类型统计数量，画个饼图」
 - 「画出 t_vehicle_steps 表里里程的分布直方图」
+- 「画出最近 7 天每日产量的折线图」
+- 「把上面的分析总结导出成 PDF 报告」
 
 > 注：服务默认端口 8000，若与仓库里其他 agent 的 server.py 冲突，改 `app.py` 末尾的 `port=8000`。
 
@@ -131,7 +146,11 @@ def compute_correlation(x: str, y: str) -> str:
 
 ### 修改模型 / Ollama 地址
 
-在 `agent.py` 顶部的常量里改：`OLLAMA_HOST` / `MODEL` / `TEMPERATURE`。
+在 `.env` 里改（复制 `.env.example` 后填写）：
+- `LLM_PROVIDER` 切换 `ollama` / `openai` 后端；
+- Ollama：`OLLAMA_HOST` / `OLLAMA_MODEL` / `OLLAMA_TIMEOUT`（27b 冷启动首 token 较慢，默认 300s）；
+- OpenAI 兼容代理：`OPENAI_BASE_URL` / `OPENAI_API_KEY` / `OPENAI_MODEL`；
+- `TEMPERATURE` / `MAX_OUTPUT_TOKENS` 也可覆盖。网页端每次请求还能用 provider/api_key 临时切换后端。
 
 ## 调试
 
