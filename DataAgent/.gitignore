@@ -9,6 +9,7 @@ settings.json
 static/*.json
 reports
 API.md
+logs/
 
 # Python
 __pycache__/

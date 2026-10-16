@@ -324,7 +324,9 @@ def build_system_prompt() -> str:
 # Agent 状态
 # ============================================================
 # 记忆上限：checkpoint 里最多保留最近这么多条消息，防止 agent_memory.sqlite 无限膨胀。
-MAX_MESSAGES = 30
+# 一次工具调用 = 1 条 AIMessage + 1 条 ToolMessage，30 条两三个问题就会触发前端「接近上限」；
+# thinking 已不再落库，100 条足够长会话，可用 .env 的 MAX_MESSAGES 覆盖。
+MAX_MESSAGES = int(os.getenv("MAX_MESSAGES", "100"))
 
 
 def _capped_messages(
@@ -377,7 +379,7 @@ def _trim_history(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
     return [*sys_msgs, *kept]
 
 
-def convert_messages(messages: Sequence[BaseMessage], provider: str) -> list[dict]:
+def convert_messages(messages: Sequence[BaseMessage]) -> list[dict]:
     """把 LangChain 消息转成 OpenAI/Ollama 兼容的 dict 格式。"""
     out: list[dict] = []
     for m in messages:
@@ -395,11 +397,7 @@ def convert_messages(messages: Sequence[BaseMessage], provider: str) -> list[dic
                     }
                     for tc in m.tool_calls
                 ]
-            # Ollama 需要把思考回填进 history；OpenAI 的 reasoning_content 是只读输出，不回传
-            if provider == "ollama":
-                thinking = m.additional_kwargs.get("reasoning_content")
-                if thinking:
-                    extra["thinking"] = thinking
+            # thinking 不落库、不回传：Qwen 每轮重新思考，回填只会白白占用后续轮次的上下文
         elif isinstance(m, SystemMessage):
             role = "system"
         elif isinstance(m, ToolMessage):
@@ -554,7 +552,7 @@ async def model_call(state: AgentState, config) -> AgentState:
     api_key = (cfg.get("api_key") or "").strip() or None
     meta = _runtime_meta(config)
 
-    messages = convert_messages(_trim_history(state["messages"]), provider)
+    messages = convert_messages(_trim_history(state["messages"]))
 
     try:
         if provider == "openai":
@@ -653,9 +651,10 @@ async def model_call(state: AgentState, config) -> AgentState:
         except Exception:
             pass
 
+    # thinking 只用于流式展示，不落库也不回传：Qwen 每轮重新思考，无需看上一轮思考；
+    # 落库只会让 agent_memory.sqlite 和后续每轮上下文被思考过程撑爆。
     ai_msg = AIMessage(
         content=content,
-        additional_kwargs={"reasoning_content": thinking} if thinking else {},
         tool_calls=tool_calls,
     )
     return {"messages": [ai_msg]}
@@ -936,7 +935,7 @@ async def finalize(state: AgentState, config) -> AgentState:
     provider = (cfg.get("provider") or "").strip().lower() or DEFAULT_PROVIDER
     api_key = (cfg.get("api_key") or "").strip() or None
 
-    messages = convert_messages(_trim_history(state["messages"]), provider)
+    messages = convert_messages(_trim_history(state["messages"]))
     messages.append(
         {
             "role": "user",
@@ -967,14 +966,7 @@ async def finalize(state: AgentState, config) -> AgentState:
         content = "已执行多次查询但未能得出最终结论，请缩小问题范围或换一种更具体的问法后重试。"
         writer({"type": "content", "content": content})
 
-    return {
-        "messages": [
-            AIMessage(
-                content=content,
-                additional_kwargs={"reasoning_content": thinking} if thinking else {},
-            )
-        ]
-    }
+    return {"messages": [AIMessage(content=content)]}
 
 
 # ============================================================
