@@ -1,0 +1,17 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+.env.example
+*.sqlite
+*.sqlite-*
+settings.json
+databases.json
+error_log.jsonl
+agent_graph.png
+static/charts/
+static/reports/
+logs/
+reports/
+static/*.json

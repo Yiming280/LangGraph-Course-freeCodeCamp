@@ -48,6 +48,9 @@ from tools._settings import (
     get_log_dirs,
     get_log_sources,
 )
+from tools._sop_store import delete_entry as sop_delete_entry
+from tools._sop_store import list_entries as sop_list_entries
+from tools._sop_store import upsert_entry as sop_upsert_entry
 from tools.database import test_connection
 from tools.iotdb import test_iotdb_connection
 
@@ -336,6 +339,45 @@ async def download_report(filename: str):
         return Response("报告不存在", status_code=404)
     media = "application/pdf" if path.suffix == ".pdf" else "text/markdown; charset=utf-8"
     return FileResponse(path, media_type=media, filename=name)
+
+
+@app.get("/sop")
+async def list_sop():
+    """列出全部维修 SOP 条目（含所有字段）。"""
+    return {"ok": True, "entries": sop_list_entries()}
+
+
+@app.post("/sop")
+async def save_sop(request: Request):
+    """新增/更新一条维修 SOP（按 error_code 或 title 去重）。title 必填，error_code 可选。"""
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    if not title:
+        return {"ok": False, "error": "问题描述（title）必填"}
+    try:
+        entry = sop_upsert_entry(
+            {
+                "id": (body.get("id") or "").strip(),
+                "title": title,
+                "error_code": (body.get("error_code") or "").strip(),
+                "cause_type": body.get("cause_type") or "",
+                "troubleshoot": body.get("troubleshoot") or "",
+                "solution": body.get("solution") or "",
+                "device": body.get("device") or "",
+            }
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "entry": entry}
+
+
+@app.delete("/sop/{key}")
+async def remove_sop(key: str):
+    """删除一条维修 SOP（key 可为 id / error_code / title）。"""
+    ok = sop_delete_entry(key)
+    if not ok:
+        return {"ok": False, "error": "该条目不存在"}
+    return {"ok": True}
 
 
 @app.post("/memory/import")

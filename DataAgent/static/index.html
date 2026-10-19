@@ -778,6 +778,7 @@
             <button class="new-chat-btn" onclick="toggleHistSidebar()">🕘 历史会话</button>
             <button class="new-chat-btn" onclick="openMemModal()">💾 记忆</button>
             <button class="new-chat-btn" onclick="openDbModal()">⚙️ 连接配置</button>
+            <button class="new-chat-btn" onclick="openSopModal()">📋 SOP 知识库</button>
             <button class="new-chat-btn" onclick="openErrModal()">📊 错误统计</button>
             <button class="new-chat-btn" id="reportBtn" onclick="exportReport()">📄 生成报告</button>
             <button class="new-chat-btn" onclick="newChat()">＋ 新会话</button>
@@ -902,6 +903,62 @@
 
                 <div class="cfg-section-title">本机日志目录</div>
                 <div id="logList" class="db-list"></div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- SOP 知识库弹窗 -->
+    <div class="db-modal" id="sopModal">
+        <div class="db-panel">
+            <div class="db-header">
+                <h2>维修 SOP 知识库</h2>
+                <button class="db-close" onclick="closeSopModal()">✕</button>
+            </div>
+            <div class="db-body">
+
+                <button class="db-add-btn" id="addSopBtn" onclick="openSopForm()">＋ 新增 SOP</button>
+
+                <div class="db-form" id="sopForm" style="display:none">
+                    <h3 id="sopFormTitle">新增 SOP</h3>
+
+                    <div class="form-grid">
+                        <div class="field">
+                            <label>问题描述 <span class="req">*</span></label>
+                            <input id="sopTitle" placeholder="如 主轴不转 / 送料超时">
+                        </div>
+                        <div class="field">
+                            <label>错误码（可选）</label>
+                            <input id="sopErrorCode" placeholder="如 E1001（无码留空）">
+                        </div>
+                        <div class="field">
+                            <label>引起问题类型</label>
+                            <input id="sopCauseType" placeholder="如 机械 / 电气 / 导航">
+                        </div>
+                        <div class="field">
+                            <label>适用设备 / 模块（可选）</label>
+                            <input id="sopDevice" placeholder="如 CNC-01">
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label>排查方法</label>
+                        <textarea id="sopTroubleshoot" rows="3" placeholder="逐条排查步骤"></textarea>
+                    </div>
+                    <div class="field">
+                        <label>解决方法</label>
+                        <textarea id="sopSolution" rows="3" placeholder="处理 / 维修步骤"></textarea>
+                    </div>
+
+                    <div class="db-form-actions">
+                        <button class="db-btn db-save" onclick="saveSopCurrent()">保存</button>
+                        <button class="db-btn db-cancel" onclick="cancelSopForm()">取消</button>
+                    </div>
+                    <div id="sopResult" class="db-test-result"></div>
+                </div>
+
+                <div class="cfg-section-title">SOP 条目</div>
+                <div id="sopList" class="db-list"></div>
 
             </div>
         </div>
@@ -1376,6 +1433,151 @@
 
         function escapeAttr(s) {
             return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        }
+
+        // ============ SOP 知识库（增改删） ============
+        let currentSop = null;
+        let editingSopId = null; // 编辑中条目的 id（null = 新增）
+
+        async function openSopModal() {
+            document.getElementById('sopModal').classList.add('show');
+            cancelSopForm();
+            await loadSop();
+        }
+
+        function closeSopModal() {
+            document.getElementById('sopModal').classList.remove('show');
+            cancelSopForm();
+        }
+
+        async function loadSop() {
+            const listEl = document.getElementById('sopList');
+            try {
+                const res = await fetch('/sop');
+                const data = await res.json();
+                currentSop = data.entries || [];
+                renderSopList(currentSop);
+            } catch (e) {
+                listEl.innerHTML = `<div class="db-meta">加载失败: ${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function renderSopList(entries) {
+            const listEl = document.getElementById('sopList');
+            const form = document.getElementById('sopForm');
+            if (form && form.parentElement === listEl) {
+                document.getElementById('addSopBtn').after(form);
+            }
+            if (!entries || !entries.length) {
+                listEl.innerHTML = '<div class="db-meta" style="text-align:center;padding:10px">尚未录入任何 SOP</div>';
+                return;
+            }
+            listEl.innerHTML = '';
+            entries.forEach(e => {
+                const card = document.createElement('div');
+                card.className = 'db-card';
+                const code = e.error_code ? escapeHtml(e.error_code) : '（无码）';
+                const meta = [e.cause_type, e.device].filter(Boolean).map(escapeHtml).join(' · ');
+                card.innerHTML = `
+                    <div class="db-info">
+                        <div class="db-alias">${code} — ${escapeHtml(e.title)}</div>
+                        ${meta ? `<div class="db-meta">${meta}</div>` : ''}
+                    </div>
+                    <div class="db-actions">
+                        <button onclick="editSop('${escapeAttr(e.id)}', this)">编辑</button>
+                        <button class="danger" onclick="deleteSop('${escapeAttr(e.id)}')">删除</button>
+                    </div>
+                `;
+                listEl.appendChild(card);
+            });
+        }
+
+        function resetSopForm() {
+            ['sopTitle', 'sopErrorCode', 'sopCauseType', 'sopDevice', 'sopTroubleshoot', 'sopSolution'].forEach(id =>
+                document.getElementById(id).value = '');
+            editingSopId = null;
+            const resultEl = document.getElementById('sopResult');
+            resultEl.textContent = '';
+            resultEl.className = 'db-test-result';
+        }
+
+        function showSopFormAfter(anchor) {
+            anchor.after(document.getElementById('sopForm'));
+            document.getElementById('sopForm').style.display = 'flex';
+        }
+
+        function openSopForm() {
+            resetSopForm();
+            document.getElementById('sopFormTitle').textContent = '新增 SOP';
+            showSopFormAfter(document.getElementById('addSopBtn'));
+        }
+
+        function editSop(id, btn) {
+            const entry = (currentSop || []).find(e => e.id === id);
+            if (!entry) return;
+            resetSopForm();
+            editingSopId = id;
+            document.getElementById('sopFormTitle').textContent = '编辑 SOP';
+            document.getElementById('sopTitle').value = entry.title || '';
+            document.getElementById('sopErrorCode').value = entry.error_code || '';
+            document.getElementById('sopCauseType').value = entry.cause_type || '';
+            document.getElementById('sopDevice').value = entry.device || '';
+            document.getElementById('sopTroubleshoot').value = entry.troubleshoot || '';
+            document.getElementById('sopSolution').value = entry.solution || '';
+            showSopFormAfter(btn.closest('.db-card'));
+        }
+
+        function cancelSopForm() {
+            const form = document.getElementById('sopForm');
+            form.style.display = 'none';
+            document.getElementById('addSopBtn').after(form);
+            editingSopId = null;
+        }
+
+        async function saveSopCurrent() {
+            const resultEl = document.getElementById('sopResult');
+            const title = document.getElementById('sopTitle').value.trim();
+            if (!title) {
+                resultEl.textContent = '问题描述必填';
+                resultEl.className = 'db-test-result err';
+                return;
+            }
+            const body = {
+                id: editingSopId || '',
+                title: title,
+                error_code: document.getElementById('sopErrorCode').value.trim(),
+                cause_type: document.getElementById('sopCauseType').value.trim(),
+                troubleshoot: document.getElementById('sopTroubleshoot').value.trim(),
+                solution: document.getElementById('sopSolution').value.trim(),
+                device: document.getElementById('sopDevice').value.trim(),
+            };
+            try {
+                const res = await fetch('/sop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    cancelSopForm();
+                    await loadSop();
+                } else {
+                    resultEl.textContent = data.error || '保存失败';
+                    resultEl.className = 'db-test-result err';
+                }
+            } catch (e) {
+                resultEl.textContent = '保存失败: ' + e.message;
+                resultEl.className = 'db-test-result err';
+            }
+        }
+
+        async function deleteSop(id) {
+            const entry = (currentSop || []).find(e => e.id === id);
+            const label = entry ? (entry.error_code || entry.title) : id;
+            if (!confirm('确定删除 SOP「' + label + '」吗？')) return;
+            cancelSopForm();
+            await fetch('/sop/' + encodeURIComponent(id), { method: 'DELETE' });
+            await loadSop();
         }
 
         // ============ 记忆管理（导出/导入） ============

@@ -235,6 +235,11 @@ SYSTEM_PROMPT = """你是 Data Agent，一个能提取数据库数据、做分�
     分析过程、关键数字与结论；images 传之前图表工具返回的 /static/charts/xxx.png 的
     JSON 数组字符串；format 传 "md" 或 "pdf"。工具返回下载链接，把它以 Markdown 链接
     形式（如 [下载报告](url)）写进最终回答给用户点击。
+13. search_sop(error_code, keyword) / save_sop(...) / delete_sop(...) —— 【维修 SOP 知识库】。
+    用户问维修 / 设备故障 / 某个 error code 怎么处理时，先 search_sop 查知识库：
+    有 error code 就传 error_code 精确查，只有现象/描述（很多条目无码）就传 keyword
+    关键词查，都为空则返回全部条目索引。用户要求新增/修改/删除 SOP 条目时用
+    save_sop / delete_sop（以网页录入为准，模型写入需谨慎，不要凭空编造维修步骤）。
 
 你的工作流程：
 1. 先 describe_database() 拿到该库全部表与列的真实清单，再按需写 SQL。

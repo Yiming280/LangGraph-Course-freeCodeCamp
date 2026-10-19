@@ -4,12 +4,16 @@ agent_graph.png
 error_log.jsonl
 static/charts/
 static/reports/
+sop_import/
+sop.json
 databases.json
 settings.json
 static/*.json
 reports
 API.md
 logs/
+data/
+dataagent.tar.gz
 
 # Python
 __pycache__/
