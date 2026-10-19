@@ -55,7 +55,7 @@ uv pip install --python ../.venv/bin/python -r requirements.txt
 
 # 3. 启动（agent_memory.sqlite 会自动创建）
 ../.venv/bin/python app.py
-# 浏览器打开 http://localhost:8000
+# 浏览器打开 http://localhost:8001
 ```
 如果出现 `address already in use`的错误，查出占用的进程：
 ```bash
@@ -74,7 +74,19 @@ sudo kill [PID]
 - 「画出最近 7 天每日产量的折线图」
 - 「把上面的分析总结导出成 PDF 报告」
 
-> 注：服务默认端口 8000，若与仓库里其他 agent 的 server.py 冲突，改 `app.py` 末尾的 `port=8000`。
+> 注：服务默认端口 8001，可用环境变量 `DATA_AGENT_PORT` 覆盖。
+
+## Docker 部署
+
+也可以打包成 Docker 跑，配置同样走 `.env`：
+
+```bash
+cd DataAgent
+docker build -t dataagent:latest .
+./run.sh      # 监听 8001
+```
+
+构建、启动、开发热重载、打包交付等完整说明见 [DOCKER.md](DOCKER.md)。
 
 ## 架构说明
 
@@ -159,6 +171,6 @@ def compute_correlation(x: str, y: str) -> str:
 ../.venv/bin/python agent.py
 
 # 直连 SSE 看原始事件
-curl -N -X POST localhost:8000/chat -H 'Content-Type: application/json' \
+curl -N -X POST localhost:8001/chat -H 'Content-Type: application/json' \
   -d '{"message":"数据库里有哪些表？","session_id":"s1"}'
 ```

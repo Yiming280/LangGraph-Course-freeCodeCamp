@@ -1,21 +1,18 @@
-# Data Agent Docker 部署与交付
+# Docker 部署
 
 ## 镜像里是什么
 
-`dataagent:latest` 是一个「打包好的快照」：精简 Linux + Python 3.12 + 全部依赖 + 一份 `DataAgent/` 源码拷贝。启动时先跑 `docker-entrypoint.sh`（把 `agent_memory.sqlite` 等状态文件软链到挂载的 `/data` 做持久化），再执行 `python app.py` 监听 8001。
+`dataagent:latest` = Debian + Python 3.12 + 全部依赖 + `DataAgent/` 源码的拷贝。启动时先跑 `docker-entrypoint.sh`（把 `agent_memory.sqlite` 等状态文件软链到 `/data` 持久化），再执行 `python app.py`，监听 8001。
 
-**注意**：镜像里的代码是 `docker build` 那一刻的**拷贝**。改源码后要重新 build，容器才会用新代码。
+镜像里的代码是 build 那一刻的快照，改了源码要重新 build 才会生效。
 
-## 开发者自己用
-
-### 构建
+## 构建
 
 ```bash
-cd DataAgent
 docker build -t dataagent:latest .
 ```
 
-### 启动（等价于 docker-compose，因为本机可能没装 compose 插件）
+## 启动
 
 ```bash
 docker run -d --name dataagent \
@@ -24,15 +21,16 @@ docker run -d --name dataagent \
   -v "$(pwd)/data:/data" \
   -v "$(pwd)/data/charts:/app/static/charts" \
   -v "$(pwd)/data/reports:/app/static/reports" \
-  -v "$(pwd)/domain:/app/domain" \
-  -v "$(pwd)/../Agents:/Agents" \
   --restart unless-stopped \
   dataagent:latest
 ```
 
-> `-v "$(pwd)/../Agents:/Agents"` 是 RAG 美股知识库（可选）；不挂也能启动，只是调用该工具会报错。
+- 要读本机日志：挂日志目录 `-v /path/logs:/logs`，并把 `LOG_DIRS` 指到 `/logs`。
+- 要 RAG 美股知识库：挂 `-v "$(pwd)/../Agents:/Agents"`。
 
-### 开发期热重载（改代码立刻生效，不用重 build）
+## 开发热重载
+
+改代码不想每次重 build，把源码目录挂进容器加 `--reload`：
 
 ```bash
 docker run -d --name dataagent-dev \
@@ -46,62 +44,35 @@ docker run -d --name dataagent-dev \
   python -m uvicorn app:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-最后那个 `-v "$(pwd):/app"` 用你的真实源码覆盖镜像里的拷贝，`--reload` 让改 `app.py` 后自动重启。
+最后那个 `-v "$(pwd):/app"` 用真实源码盖掉镜像里的拷贝，`--reload` 改 `app.py` 自动重启。
 
-### 改完交付前
+## 交付
 
-```bash
-docker build -t dataagent:latest .   # 重新打包最新代码
-```
+需要 3 样东西：镜像 tarball、`run.sh`、`.env`。
 
-## 交付给前端同事（一键能跑）
-
-同事只需要 **3 样东西**：镜像 tarball + `run.sh` + 一份 `.env`。
-
-### 1. 打包镜像（开发者机器上执行）
+打包镜像：
 
 ```bash
-cd DataAgent
 docker save dataagent:latest | gzip > dataagent.tar.gz
 ```
 
-把 `dataagent.tar.gz`、`run.sh`、`.env`（或让同事按 `.env.example` 自己填）一起发给他。
-
-### 2. 同事机器上执行
+拿到 tarball + `run.sh` + `.env` 后：
 
 ```bash
-docker load -i dataagent.tar.gz   # 导入镜像，不需要配加速器、不需要 build
+docker load -i dataagent.tar.gz   # 导入镜像，不联网、不用配加速器
 chmod +x run.sh
-./run.sh                          # 一键启动，监听 8001
+./run.sh                          # 监听 8001
 ```
 
-`run.sh` 会自动：
-- 检查镜像和 `.env` 是否存在，缺失时给出中文提示
-- 移除旧容器、用 `.env` 配置启动、挂载持久化目录
-- 打印启动地址和日志命令
+前端把 `/chat /stop /models /sessions /memory /static` 代理到 `http://localhost:8001`，不用管旧的 `/` 页面。接口协议见 [API.md](API.md)。
 
-### 3. 前端接入
+## 配置
 
-同事的 Vue 前端把下面路径代理到 `http://localhost:8001` 即可，**不需要访问旧网页 `/`**：
-
-```
-/chat  /stop  /models  /sessions  /memory  /static
-```
-
-接口协议见 [API.md](API.md)。
-
-## 配置（全部走 .env，镜像内不写死）
-
-`run.sh` / `docker run` 都从 `.env` 读配置。数据库、IoTDB、日志路径、LLM 模型/地址/Key 全部可外部改，改完重启容器生效，无需重 build。变量清单见 `.env.example`，含：
-
-- LLM：`LLM_PROVIDER` `OLLAMA_HOST` `OLLAMA_MODEL` `OPENAI_BASE_URL` `OPENAI_API_KEY` `OPENAI_MODEL` …
-- 数据库：`DATABASES` `DEFAULT_DATABASE` `DB_<别名>_HOST/PORT/DBNAME/USER/PASSWORD`
-- IoTDB：`IOTDB_HOST/PORT/USER/PASSWORD`
-- 日志：`LOG_DIRS`
+全部走 `.env`，镜像里不写死。数据库 / IoTDB / 日志路径 / LLM 地址和 Key 改 `.env` 后重启容器生效，不用重 build。变量清单见 `.env.example`。
 
 ## 故障排查
 
-**拉不到基础镜像 / 构建超时**：国内直连 Docker Hub 不通，需配镜像加速器。编辑 `/etc/docker/daemon.json` 后重启 docker：
+**拉不到基础镜像**：国内直连 Docker Hub 不通，配镜像加速器。编辑 `/etc/docker/daemon.json` 后重启 docker：
 
 ```json
 { "registry-mirrors": ["https://docker.m.daocloud.io"] }
@@ -111,8 +82,6 @@ chmod +x run.sh
 sudo systemctl restart docker
 ```
 
-DaoCloud 偶发 CDN 超时（重试即可）；更稳的做法是问运维要**内网 registry 镜像源**。备选公共加速器：`docker.1panel.live`、`dockerproxy.net`、`docker.1ms.run`。
+DaoCloud 偶发 CDN 超时，重试即可；更稳的问运维要内网镜像源。备选：`docker.1panel.live`、`dockerproxy.net`、`docker.1ms.run`。tarball 交付不联网，不受影响。
 
-**同事用 tarball 交付时不需要加速器**（`docker load` 是本地导入，不联网）。
-
-**没有 `docker compose`**：装 `docker-compose-plugin`，或直接用本文件里的 `docker run` / `run.sh`（不依赖 compose）。
+**没有 `docker compose`**：直接用上面的 `docker run` 或 `run.sh`，不依赖 compose。
