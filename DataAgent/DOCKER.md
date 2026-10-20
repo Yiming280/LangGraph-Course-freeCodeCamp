@@ -26,7 +26,6 @@ docker run -d --name dataagent \
 ```
 
 - 要读本机日志：挂日志目录 `-v /path/logs:/logs`，并把 `LOG_DIRS` 指到 `/logs`。
-- 要 RAG 美股知识库：挂 `-v "$(pwd)/../Agents:/Agents"`。
 
 ## 开发热重载
 
@@ -36,15 +35,28 @@ docker run -d --name dataagent \
 docker run -d --name dataagent-dev \
   --env-file .env \
   -p 8001:8001 \
-  -v "$(pwd)/data:/data" \
-  -v "$(pwd)/data/charts:/app/static/charts" \
-  -v "$(pwd)/data/reports:/app/static/reports" \
   -v "$(pwd):/app" \
   dataagent:latest \
   python -m uvicorn app:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-最后那个 `-v "$(pwd):/app"` 用真实源码盖掉镜像里的拷贝，`--reload` 改 `app.py` 自动重启。
+`-v "$(pwd):/app"` 用真实源码盖掉镜像里的拷贝，`--reload` 改 `app.py` 自动重启。
+dev 模式**不要挂 `/data`**：否则 entrypoint 会 `ln -sfn /data/xxx /app/xxx`，在宿主机源码目录里生成指向 `/data` 的坏软链。
+
+问题：容器名 dataagent-dev 已经被占用了（之前有个同名容器还在，即使没在运行也会占着名字）。
+
+解决方法：删掉旧容器再跑
+
+```
+docker rm -f dataagent-dev
+```
+然后重新执行 docker run 命令即可。
+
+查看容器状态：
+
+```
+docker ps -a --filter name=dataagent-dev
+```
 
 ## 交付
 

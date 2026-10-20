@@ -11,10 +11,3 @@ matplotlib
 langgraph-checkpoint-sqlite
 # 时序数据库工具（tools/iotdb.py）依赖
 apache-iotdb
-# RAG 工具（tools/rag.py）依赖
-langchain-community
-langchain-chroma
-langchain-ollama
-langchain-text-splitters
-pypdf
-chromadb

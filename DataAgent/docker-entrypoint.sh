@@ -7,7 +7,7 @@ mkdir -p /app/static/charts /app/static/reports
 # 把会写盘的扁平状态文件软链到 /data（若挂载了持久化卷）。
 # sqlite 会沿软链目标解析，-wal/-shm 也跟着落到 /data，跨重启不丢。
 if [ -d /data ]; then
-  for f in agent_memory.sqlite settings.json error_log.jsonl; do
+  for f in agent_memory.sqlite settings.json error_log.jsonl sop.json; do
     ln -sfn "/data/$f" "/app/$f"
   done
 fi

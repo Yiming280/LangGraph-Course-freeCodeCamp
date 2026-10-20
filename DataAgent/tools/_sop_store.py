@@ -233,3 +233,127 @@ def import_csv(path: Any) -> tuple[int, int]:
         upsert_entry(cfg)
         imported += 1
     return imported, skipped
+
+
+# ------------------------------------------------------------
+# 导入（Excel .xlsx）
+# ------------------------------------------------------------
+def import_xlsx(path: Any) -> int:
+    """从 Excel（.xlsx）导入维修 SOP，覆盖整个库（以 xlsx 为权威源）。
+
+    xlsx 是合并单元格结构：表头含 问题描述/引起问题类型/排查方法/解决方法，
+    同一个问题下面有多行、每行一种「引起问题类型」。
+    导入时按「问题」聚合，多个类型及其排查/解决按段落拼进同一条目。返回导入条数。
+    """
+    path = Path(path)
+    entries = _parse_sop_xlsx(path)
+    _write(entries)
+    return len(entries)
+
+
+def _parse_sop_xlsx(path: Path) -> list[dict]:
+    """解析 SOP xlsx（纯标准库）：共享字符串 + 合并单元格向下填充 + 按问题聚合。"""
+    import zipfile
+    import xml.etree.ElementTree as ET
+
+    def local(tag: str) -> str:
+        return tag.split("}")[-1]
+
+    z = zipfile.ZipFile(str(path))
+
+    shared: list[str] = []
+    if "xl/sharedStrings.xml" in z.namelist():
+        root = ET.fromstring(z.read("xl/sharedStrings.xml"))
+        for si in root:
+            shared.append("".join(t.text or "" for t in si.iter() if local(t.tag) == "t"))
+
+    sheet_files = sorted(
+        n for n in z.namelist()
+        if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")
+    )
+    if not sheet_files:
+        raise ValueError(f"xlsx 里没有工作表: {path}")
+
+    def cell_value(c) -> str:
+        t = c.get("t")
+        val = None
+        for ch in c:
+            if local(ch.tag) == "v":
+                val = ch.text
+            elif local(ch.tag) == "is":
+                val = "".join(x.text or "" for x in ch.iter() if local(x.tag) == "t")
+        if val is None:
+            return ""
+        if t == "s":
+            val = shared[int(val)]
+        return (val or "").strip()
+
+    root = ET.fromstring(z.read(sheet_files[0]))
+    raw_rows: list[dict[str, str]] = []
+    for row in root.iter():
+        if local(row.tag) != "row":
+            continue
+        cells: dict[str, str] = {}
+        for c in row:
+            if local(c.tag) != "c":
+                continue
+            ref = c.get("r") or ""
+            col = "".join(ch for ch in ref if ch.isalpha())
+            v = cell_value(c)
+            if v:
+                cells[col] = v
+        if cells:
+            raw_rows.append(cells)
+
+    # 表头：含「问题描述」的那一行
+    header: dict[str, str] = {}
+    header_idx = None
+    for i, row in enumerate(raw_rows):
+        if "问题描述" in row.values():
+            header_idx = i
+            for col, name in row.items():
+                header[name] = col
+            break
+    if header_idx is None:
+        raise ValueError(f"找不到表头（含「问题描述」的行）: {path}")
+
+    def get(row: dict, field: str) -> str:
+        col = header.get(field)
+        return row.get(col, "") if col else ""
+
+    # 逐行聚合：问题描述非空 = 新问题
+    groups: list[dict] = []
+    cur = None
+    for row in raw_rows[header_idx + 1:]:
+        desc = get(row, "问题描述")
+        typ = get(row, "引起问题类型")
+        ts = get(row, "排查方法")
+        sol = get(row, "解决方法")
+        if desc:
+            if cur:
+                groups.append(cur)
+            cur = {"title": desc, "no": get(row, "序号"), "rows": []}
+        if cur is None:
+            continue
+        if typ or ts or sol:
+            cur["rows"].append((typ, ts, sol))
+    if cur:
+        groups.append(cur)
+
+    entries: list[dict] = []
+    for g in groups:
+        rows = g["rows"]
+        extra = {"序号": g["no"]} if g["no"] else {}
+        entries.append(
+            {
+                "id": uuid.uuid4().hex,
+                "error_code": "",
+                "title": g["title"],
+                "cause_type": " / ".join(t for t, _, _ in rows if t),
+                "troubleshoot": "\n\n".join(f"【{t}】\n{s}" for t, s, _ in rows if s),
+                "solution": "\n\n".join(f"【{t}】\n{s}" for t, _, s in rows if s),
+                "device": "",
+                "extra": extra,
+            }
+        )
+    return entries

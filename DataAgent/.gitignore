@@ -10,10 +10,10 @@ databases.json
 settings.json
 static/*.json
 reports
-API.md
 logs/
 data/
 dataagent.tar.gz
+knowledge/
 
 # Python
 __pycache__/

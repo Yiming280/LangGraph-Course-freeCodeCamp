@@ -212,10 +212,24 @@ def _reconstruct_session(db_path: str, thread_id: str) -> tuple[list[dict], str]
     return items, latest_ts
 
 
-def list_sessions(db_path: str) -> list[dict]:
-    """列出所有会话（id / 标题 / 预览 / 更新时间 / 消息数），按更新时间倒序。"""
+def session_thread_id(user_id: str, session_id: str) -> str:
+    """会话隔离键：有 user_id 时用 `user_id:session_id` 作 thread_id，否则退化为 session_id。"""
+    user_id = (user_id or "").strip()
+    session_id = (session_id or "").strip() or "default"
+    return f"{user_id}:{session_id}" if user_id else session_id
+
+
+def list_sessions(db_path: str, user_id: str = "") -> list[dict]:
+    """列出会话（id / 标题 / 预览 / 更新时间 / 消息数），按更新时间倒序。
+
+    user_id 非空时只列该用户的会话，返回的 id 为去掉 `user_id:` 前缀的 session_id。
+    """
+    user_id = (user_id or "").strip()
+    prefix = f"{user_id}:" if user_id else ""
     sessions = []
     for tid in _list_thread_ids(db_path):
+        if prefix and not tid.startswith(prefix):
+            continue
         items, latest_ts = _reconstruct_session(db_path, tid)
         if not items:
             continue
@@ -231,7 +245,7 @@ def list_sessions(db_path: str) -> list[dict]:
                 break
         sessions.append(
             {
-                "id": tid,
+                "id": tid[len(prefix):] if prefix else tid,
                 "title": title or "（无文字）",
                 "preview": preview,
                 "updated_at": latest_ts,

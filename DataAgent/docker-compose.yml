@@ -24,7 +24,6 @@ services:
       - ./data/reports:/app/static/reports   # 生成的报告
       # —— 知识库 / 外部数据（挂载而非打进镜像，改内容不用重 build）——
       - ./domain:/app/domain                 # 生产数据字典 + 供料拓扑
-      - ../Agents:/Agents                    # RAG 美股知识库（chroma 向量库 + PDF）
       # —— 本机日志（可选）：挂宿主机日志目录，LOG_DIRS 指向容器内挂载点 ——
       # - ./logs:/logs
     restart: unless-stopped

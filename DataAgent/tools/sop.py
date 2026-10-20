@@ -44,14 +44,20 @@ def _format_results(entries: list[dict], total: int) -> str:
     return "\n\n".join(parts)
 
 
+def _format_all_entries(entries: list[dict]) -> str:
+    """把全部条目全文格式化，供模型按语义挑选（无码/自然语言描述兜底用）。"""
+    return "\n\n".join(f"--- {i} ---\n{_format_entry(e)}" for i, e in enumerate(entries, 1))
+
+
 @tool
 def search_sop(error_code: str = "", keyword: str = "") -> str:
     """检索维修 SOP 知识库，返回维修/故障处理的条目内容。
 
     当用户问维修、设备故障、某个 error code 怎么处理时调用本工具：
-    - 用户给了 error code：传 error_code 精确查（命中即返回该条，未命中转关键词兜底）。
-    - 用户只说现象/描述（很多条目没有 error code）：传 keyword 做全字段关键词检索。
-    - 都为空：返回知识库全部条目的索引（error code + 问题描述），供浏览选择。
+    - 用户给了 error code：传 error_code 精确查；未命中时转关键词/全量兜底。
+    - 用户只说现象/描述（很多条目没有 error code）：传 keyword 做关键词检索；
+      关键词没精确命中时，返回全部条目全文，交给模型做语义匹配（条目少，成本可控）。
+    - 都为空：返回全部条目索引（error code + 问题描述），供浏览选择。
 
     Args:
         error_code: 错误码/故障码，如 "E1001"。可选。
@@ -68,15 +74,22 @@ def search_sop(error_code: str = "", keyword: str = "") -> str:
         if entry:
             return _format_entry(entry)
         results = search_entries(ec)
-        return _format_results(results[:MAX_RESULTS], len(results))
+        if results:
+            return _format_results(results[:MAX_RESULTS], len(results))
 
     if kw:
         results = search_entries(kw)
-        return _format_results(results[:MAX_RESULTS], len(results))
+        if results:
+            return _format_results(results[:MAX_RESULTS], len(results))
 
     entries = list_entries()
     if not entries:
         return "SOP 知识库为空，暂无条目。"
+
+    # 给了查询但没精确命中 → 返回全部全文，让模型按语义挑（无码/自然语言描述主要走这里）
+    if ec or kw:
+        return _format_all_entries(entries)
+
     lines = ["SOP 知识库现有条目（error code | 问题描述）："]
     for e in entries:
         code = e.get("error_code") or "（无码）"

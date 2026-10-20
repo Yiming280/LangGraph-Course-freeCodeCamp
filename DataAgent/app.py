@@ -315,11 +315,12 @@ async def export_report_button(request: Request):
     from tools.export_report import export_conversation_report
 
     body = await request.json()
+    user_id = (body.get("user_id") or "").strip()
     session_id = (body.get("session_id") or "").strip() or "default"
     fmt = (body.get("format") or "pdf").strip().lower()
     title = (body.get("title") or "").strip()
 
-    messages = mem.get_full_session(str(MEMORY_DB), session_id)
+    messages = mem.get_full_session(str(MEMORY_DB), mem.session_thread_id(user_id, session_id))
     if not messages:
         return {"ok": False, "error": "当前会话还没有内容，请先提问再生成报告"}
 
@@ -397,38 +398,46 @@ async def import_memory_file(request: Request):
 
 
 @app.get("/sessions")
-async def list_sessions():
-    """列出所有历史会话（id / 标题 / 预览 / 更新时间 / 消息数），按更新时间倒序。"""
-    return {"sessions": mem.list_sessions(str(MEMORY_DB))}
+async def list_sessions(user_id: str = ""):
+    """列出历史会话（id / 标题 / 预览 / 更新时间 / 消息数），按更新时间倒序。
+
+    user_id 可选：非空时只列该用户的会话；为空时列全部（兼容无用户概念的旧调用）。
+    """
+    return {"sessions": mem.list_sessions(str(MEMORY_DB), user_id)}
 
 
 @app.get("/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str, before: int | None = None, limit: int = 20):
+async def get_session_messages(
+    session_id: str, user_id: str = "", before: int | None = None, limit: int = 20
+):
     """分页读取某个会话的消息（由新到旧）。
 
     before：游标 = 已加载的最早消息索引，省略则取最新一段；
     limit：每页条数（前端向上滚动时用更小的 before 取更早一段）。
     """
     limit = max(1, min(limit, 100))
-    data = mem.get_session_messages(str(MEMORY_DB), session_id, before, limit)
+    thread_id = mem.session_thread_id(user_id, session_id)
+    data = mem.get_session_messages(str(MEMORY_DB), thread_id, before, limit)
     if data is None:
         return {"ok": False, "error": "会话不存在"}
     return {"ok": True, "session_id": session_id, **data}
 
 
 @app.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, user_id: str = ""):
     """删除一个历史会话（清空其全部 checkpoint 与写入）。"""
-    ok = await mem.delete_session(app.state.checkpointer, session_id)
+    thread_id = mem.session_thread_id(user_id, session_id)
+    ok = await mem.delete_session(app.state.checkpointer, thread_id)
     if not ok:
         return {"ok": False, "error": "会话不存在"}
     return {"ok": True, "deleted": session_id}
 
 
 @app.get("/context")
-async def context_usage(session_id: str):
+async def context_usage(session_id: str, user_id: str = ""):
     """当前会话的上下文占用（消息数 / 历史字符数 / 上限），供前端「快超限」提示。"""
-    cp = await app.state.checkpointer.aget({"configurable": {"thread_id": session_id}})
+    thread_id = mem.session_thread_id(user_id, session_id)
+    cp = await app.state.checkpointer.aget({"configurable": {"thread_id": thread_id}})
     msgs = cp.get("channel_values", {}).get("messages", []) if cp else []
     chat_msgs = [m for m in msgs if not isinstance(m, SystemMessage)]
     # 与 agent._trim_history 同口径估算：每条消息按 len(content)+200 计
@@ -474,7 +483,7 @@ async def chat(request: Request):
     """
     接收用户消息，通过 SSE 流式返回 Data Agent 的输出。
 
-    请求体: {"message": "...", "session_id": "...", "provider": "ollama|openai", "api_key": "..."}
+    请求体: {"message": "...", "session_id": "...", "user_id": "...", "provider": "ollama|openai", "api_key": "..."}
       provider / api_key 可选：provider 选 LLM 后端，api_key 仅 openai 后端需要（留空用 .env 默认）
     响应: text/event-stream，事件类型：
       {"type": "thinking",    "content": "<token>"}  思考过程（逐 token）
@@ -487,7 +496,9 @@ async def chat(request: Request):
     """
     body = await request.json()
     user_message = body.get("message", "").strip()
+    user_id = (body.get("user_id") or "").strip()
     session_id = body.get("session_id", "").strip() or "default"
+    thread_id = mem.session_thread_id(user_id, session_id)
     # 可选：前端传来的后端选择 + 自定义 API Key（留空则回退到 .env 默认值）
     provider = body.get("provider")
     api_key = (body.get("api_key") or "").strip() or None
@@ -500,11 +511,11 @@ async def chat(request: Request):
 
     agent = app.state.agent
 
-    # checkpointer 按 thread_id 记忆；把前端 session_id 作为 thread_id
+    # checkpointer 按 thread_id 记忆；有 user_id 时用 `user_id:session_id` 隔离不同用户
     # provider / api_key 透传给 agent，按请求选择 LLM 后端
     config: RunnableConfig = {
         "configurable": {
-            "thread_id": session_id,
+            "thread_id": thread_id,
             "provider": provider,
             "api_key": api_key,
         }
@@ -515,7 +526,7 @@ async def chat(request: Request):
 
     # 注册本会话的停止事件，供 /stop 端点置位
     stop_event = asyncio.Event()
-    _stop_events[session_id] = stop_event
+    _stop_events[thread_id] = stop_event
 
     async def event_stream():
         gen = agent.astream(
@@ -545,7 +556,7 @@ async def chat(request: Request):
                     await gen.aclose()
                 except Exception:
                     pass
-            _stop_events.pop(session_id, None)
+            _stop_events.pop(thread_id, None)
             yield _sse_event({"type": "done"})
 
     return StreamingResponse(
@@ -563,8 +574,10 @@ async def chat(request: Request):
 async def stop(request: Request):
     """停止某个会话正在进行的生成（前端「停止」按钮调用）。"""
     body = await request.json()
+    user_id = (body.get("user_id") or "").strip()
     session_id = body.get("session_id", "").strip()
-    ev = _stop_events.get(session_id)
+    thread_id = mem.session_thread_id(user_id, session_id)
+    ev = _stop_events.get(thread_id)
     if ev:
         ev.set()
     return {"ok": True, "stopped": session_id}
