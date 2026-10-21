@@ -5,3 +5,5 @@ __pycache__
 *.bin
 Agents/*.sqlite3
 *.sqlite-*
+
+SYNC.md
