@@ -679,6 +679,20 @@
         .db-test-result { font-size: 0.8rem; margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
         .db-test-result.ok { color: #4ade80; }
         .db-test-result.err { color: #f87171; }
+        .prompt-extra textarea {
+            width: 100%;
+            box-sizing: border-box;
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 0.8rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            resize: vertical;
+            outline: none;
+        }
+        .prompt-extra textarea:focus { border-color: var(--accent); }
 
         /* ---- 历史会话侧栏 ---- */
         .hist-backdrop {
@@ -904,6 +918,17 @@
                 <div class="cfg-section-title">本机日志目录</div>
                 <div id="logList" class="db-list"></div>
 
+                <div class="cfg-section-title" style="margin-top:14px">系统提示词（自定义附加）</div>
+                <div class="db-meta" style="margin:0 0 6px">追加在系统提示词末尾、优先级最高；可在此补充/覆盖数据库说明、分析口径、数据源路由等细节。留空表示不附加。</div>
+                <div class="prompt-extra field">
+                    <textarea id="promptExtra" rows="8" placeholder="例：&#10;AMR-HL-01 属于 A 线，其状态请看 t_device_statistical_metrics……"></textarea>
+                </div>
+                <div class="db-form-actions" style="margin-top:8px">
+                    <button class="db-btn db-save" onclick="savePrompt()">保存提示词</button>
+                    <button class="db-btn db-cancel" onclick="clearPrompt()">清空</button>
+                </div>
+                <div id="promptResult" class="db-test-result"></div>
+
             </div>
         </div>
     </div>
@@ -1088,6 +1113,7 @@
                 renderDbList(currentSettings.databases || []);
                 renderIotdb(currentSettings.iotdbs || []);
                 renderLogs(currentSettings.log_sources || []);
+                document.getElementById('promptExtra').value = currentSettings.system_prompt_extra || '';
             } catch (e) {
                 listEl.innerHTML = `<div class="db-meta">加载失败: ${escapeHtml(e.message)}</div>`;
             }
@@ -1429,6 +1455,29 @@
             cancelCurrent();
             await fetch('/settings/logs/' + encodeURIComponent(alias), { method: 'DELETE' });
             await loadSettings();
+        }
+
+        async function savePrompt() {
+            const resultEl = document.getElementById('promptResult');
+            const text = document.getElementById('promptExtra').value;
+            try {
+                const res = await fetch('/settings/prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text }),
+                });
+                const data = await res.json();
+                resultEl.textContent = data.ok ? '已保存' : (data.error || '保存失败');
+                resultEl.className = 'db-test-result ' + (data.ok ? 'ok' : 'err');
+            } catch (e) {
+                resultEl.textContent = '保存失败: ' + e.message;
+                resultEl.className = 'db-test-result err';
+            }
+        }
+
+        function clearPrompt() {
+            document.getElementById('promptExtra').value = '';
+            savePrompt();
         }
 
         function escapeAttr(s) {

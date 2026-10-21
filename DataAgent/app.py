@@ -47,6 +47,8 @@ from tools._settings import (
     get_iotdbs,
     get_log_dirs,
     get_log_sources,
+    get_system_prompt_extra,
+    set_system_prompt_extra,
 )
 from tools._sop_store import delete_entry as sop_delete_entry
 from tools._sop_store import list_entries as sop_list_entries
@@ -216,6 +218,7 @@ async def get_settings():
         "default": default,
         "iotdbs": iotdbs,
         "log_sources": log_sources,
+        "system_prompt_extra": get_system_prompt_extra(),
     }
 
 
@@ -291,6 +294,14 @@ async def remove_log_source_config(alias: str):
     ok = delete_log_source(alias)
     if not ok:
         return {"ok": False, "error": "该来源不存在"}
+    return {"ok": True}
+
+
+@app.post("/settings/prompt")
+async def save_system_prompt(request: Request):
+    """保存自定义附加提示词（追加在系统提示词末尾）。text 为空则清空。"""
+    body = await request.json()
+    set_system_prompt_extra(body.get("text") or "")
     return {"ok": True}
 
 

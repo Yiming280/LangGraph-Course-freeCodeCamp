@@ -34,6 +34,7 @@ from langgraph.graph.message import add_messages
 from error_taxonomy import record_error
 from tools import ALL_TOOLS, TOOL_MAP
 from tools._db_config import databases_summary
+from tools._settings import get_system_prompt_extra
 
 load_dotenv()
 
@@ -64,6 +65,12 @@ TEMPERATURE = float(os.getenv("TEMPERATURE", "0.2"))
 # 输出 token 上限。Qwen 思考模式下 reasoning_content 会先占掉大量输出预算，
 # 默认给足空间，避免"思考过长 → 最终回答被截断/为空"。可在 .env 用 MAX_OUTPUT_TOKENS 覆盖。
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "16384"))
+
+# Ollama 上下文窗口（num_ctx，token 数）。qwen3.8:27b 架构支持到 256K，但必须显式设置才
+# 生效——代码 / Modelfile / 服务端三方都不设时，Ollama 用默认值（几千 token，远小于 256K）。
+# num_ctx 越大 KV cache 越吃显存；2×48G 跑 128K 无压力，可在 .env 用 OLLAMA_NUM_CTX 覆盖。
+# 注意：num_ctx 是「输入 + 输出」总和，MAX_OUTPUT_TOKENS 会从里面扣（128K - 16K ≈ 112K 输入）。
+OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "131072"))
 
 
 def available_models() -> list[dict]:
@@ -216,7 +223,9 @@ SYSTEM_PROMPT = """你是 Data Agent，一个能提取数据库数据、做分�
    tasks / starts / ends / groups 都是 JSON 数组字符串（groups 可选）。用户要"甘特图/时间轴/
    排程/进度条/占用时间段"时用本工具，不要用 python_executor 画图再输出 base64。
 8. 【IoTDB 时序库】list_iotdb_sources / query_iotdb / list_iotdb_databases / list_iotdb_devices / show_iotdb_timeseries
-   —— 只读查询 Apache IoTDB（产线工位状态变换），用法见下方【时序库 + 日志专项指引】。
+   —— 只读查询 Apache IoTDB。**时序库里只有「工位」状态（Station=OP 等），没有 AMR/AGV 车辆**：
+   查某台车辆在线/离线/待机/运行状态走 PostgreSQL（见【数据源路由】），不要进 IoTDB 找车。
+   工位状态复盘用法见下方【时序库 + 日志专项指引】。
    有多个 IoTDB 连接时，先 list_iotdb_sources() 看有哪些（别名 + 主机），用 alias 参数指定；
    不传 alias 用默认（第一个）。再 list_iotdb_databases(alias) 看库（业务数据在 root.iot），
    list_iotdb_devices(path, alias) 摸清设备，show_iotdb_timeseries(path, alias) 看测点结构，
@@ -246,6 +255,17 @@ SYSTEM_PROMPT = """你是 Data Agent，一个能提取数据库数据、做分�
 3. 需要可视化时，把数据整理成 JSON 数组传给图表工具，让工具生成图片。
 4. 复杂的计算/清洗/多步分析用 python_executor 完成。
 5. 最后用中文给出清晰、结构化的结论，必要时引用图表里的数字。
+
+【数据源路由（先判断问题该查哪个源，别进错地方）】
+- 车辆状态（某 AMR/AGV 在线/离线/待机/有效运行、运行/离线时长）→ **PostgreSQL**：
+  查 `t_device_statistical_metrics`（明细）或 `t_device_statistical_metrics_agg`（聚合）里的 `device_name`。
+  当前状态 = `end_at IS NULL` 的最新一条（metrics_name：有效运行时间/待机时间/离线时间，
+  metrics_type=vehicle_state）。先 get_production_dictionary(section="metrics") 理解语义再写 SQL。
+  注意：`end_at IS NULL` 可能是数据断流停在旧时刻，要结合 get_current_date 的 data_latest 判断时效，
+  并明确告诉用户「这是数据截止时点的状态，非此刻实时状态」。
+- 工位状态（某 CNC/工位 OP 的状态跳变、报警、手动介入、操作复盘）→ **IoTDB 时序库**（root.iot，工位 OP 等）。
+- 送料/供料任务（AMR 给哪台 CNC 送料、产量、断供、拓扑）→ **t_prod_reports + get_supply_chain**（见下方专项）。
+- 设备故障/维修/报错/error code → 先 **search_sop** 查维修 SOP 知识库。
 
 【生产瓶颈分析专项指引】
 当用户让你分析"生产瓶颈"时，按以下思路：
@@ -322,8 +342,14 @@ SYSTEM_PROMPT = """你是 Data Agent，一个能提取数据库数据、做分�
 
 
 def build_system_prompt() -> str:
-    """SYSTEM_PROMPT + 运行时注入的可用数据库清单（来自 .env 配置）。"""
-    return SYSTEM_PROMPT + databases_summary()
+    """SYSTEM_PROMPT + 可用数据库清单 + 网页自定义附加提示词。"""
+    prompt = SYSTEM_PROMPT + databases_summary()
+    extra = get_system_prompt_extra().strip()
+    if extra:
+        prompt += (
+            "\n\n【自定义提示词（网页配置，优先级最高；与上文冲突时以本段为准）】\n" + extra
+        )
+    return prompt
 
 
 # ============================================================
@@ -351,9 +377,11 @@ class AgentState(TypedDict):
 # ============================================================
 # 消息转换（LangChain 消息 ↔ OpenAI/Ollama 兼容格式）
 # ============================================================
-# 发给模型的历史上下文上限（字符数）。长会话会把几百 KB 的历史一起发给模型，
-# 导致 prefill 超慢甚至超时；这里只保留 system 提示 + 最近一段历史。
-MAX_HISTORY_CHARS = 40000
+# 发给模型的历史上下文上限（字符数）。num_ctx 打开到 128K 后，这里不能再卡 4 万字符，
+# 否则服务端开再大也白开（客户端只喂这么点）。字符数只是粗估：中文约 1 token/1.5 字符、
+# SQL/英文约 1 token/4 字符，20 万字符与 112K token 输入预算同量级且仍偏保守，避免超窗口。
+# 可用 .env 的 MAX_HISTORY_CHARS 覆盖。
+MAX_HISTORY_CHARS = int(os.getenv("MAX_HISTORY_CHARS", "200000"))
 
 
 def _trim_history(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
@@ -436,7 +464,7 @@ async def _stream_ollama(client, model, messages: list[dict], writer, tools=OPEN
         "model": model,
         "messages": messages,
         "stream": True,
-        "options": {"temperature": TEMPERATURE, "num_predict": MAX_OUTPUT_TOKENS},
+        "options": {"temperature": TEMPERATURE, "num_predict": MAX_OUTPUT_TOKENS, "num_ctx": OLLAMA_NUM_CTX},
     }
     if tools:
         kwargs["tools"] = tools

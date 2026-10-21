@@ -417,3 +417,24 @@ def delete_log_source(alias: str) -> bool:
     stored["log_sources"] = remaining
     _write_stored(stored)
     return True
+
+
+# ------------------------------------------------------------
+# 系统提示词（自定义附加，网页编辑）
+# ------------------------------------------------------------
+def get_system_prompt_extra() -> str:
+    """settings.json 里用户自定义的附加提示词（追加在系统提示词末尾，优先级最高）。"""
+    stored = _read_stored()
+    val = stored.get("system_prompt_extra", "")
+    return val if isinstance(val, str) else ""
+
+
+def set_system_prompt_extra(text: str) -> None:
+    """保存自定义附加提示词；传空字符串视为清空（删除该字段）。"""
+    stored = _read_stored()
+    text = (text or "").strip()
+    if text:
+        stored["system_prompt_extra"] = text
+    else:
+        stored.pop("system_prompt_extra", None)
+    _write_stored(stored)
