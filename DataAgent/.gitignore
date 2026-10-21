@@ -15,6 +15,9 @@ data/
 dataagent.tar.gz
 knowledge/
 
+# 本地测试用（生产部署用 compose/docker-compose.yml）
+/docker-compose.yml
+
 # Python
 __pycache__/
 *.pyc
